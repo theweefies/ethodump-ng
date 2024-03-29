@@ -1,0 +1,537 @@
+#!/usr/bin/env python3
+
+"""
+DNS From:  https://implement-dns.wizardzines.com/book/part_1
+"""
+
+import socket
+import struct
+import re
+import sys
+import time
+import argparse
+import netifaces
+import threading
+import queue
+import ipaddress
+from io import BytesIO
+
+import tty
+import termios
+import select
+
+from arp import parse_arp, process_arp
+from dns import parse_dns_packet, process_dns_packet
+from dhcp import parse_dhcp_packet, parse_dhcpv6_packet, extract_dhcp_client_details
+from tcp_udp import parse_eth_header, parse_ip_header, \
+    parse_tcp_header, parse_udp_header, parse_ipv6_header
+from igmp import parse_igmp
+from icmp import parse_icmpv6
+from netbios import parse_netbios_response
+from globals import Client, get_manufacturer, oui_table, oui_file
+
+ETH_P = b'\x08\x00'
+ETH_IPV6 = b'\x86\xDD'
+ARP_P = b'\x08\x06'
+ETH_P_ALL = 0x0003
+
+# Standard 80211 pcap global header (24 bytes)
+PCAP_GLOBAL_HEADER_ETHERNET = b'\xd4\xc3\xb2\xa1\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\x00\x00\x01\x00\x00\x00'
+
+QUEUE_SIZE = 1000
+
+# Global flag to signal threads to exit
+class Flags:
+    def __init__(self):         
+        self.exit_flag = False
+        self.key_code = None
+        self.client_count = 1
+        self.paused = False
+        self.paused_device_selected = None
+        self.device_switch = False
+        self.q_pressed = False
+
+clients = {}
+
+class interface:
+    interface_name = None
+    mac = None
+    ip = None
+    gateway = None
+
+    def __init__(self, name):
+        self.interface_name = name
+        self.get_own_addresses()
+        try:
+            gateways = netifaces.gateways()
+            self.gateway = gateways['default'][netifaces.AF_INET][0]
+            self.gateway_mac = gateways['default']
+        except KeyError:
+            pass
+
+    def get_own_addresses(self):
+        self.mac = netifaces.ifaddresses(self.interface_name)[netifaces.AF_LINK][0]['addr']
+        self.ip = netifaces.ifaddresses(self.interface_name)[netifaces.AF_INET][0]['addr']
+
+class Client:
+    def __init__(self, src_mac, client_ct):
+            self.client_count = client_ct
+            self.src_mac = src_mac
+            self.ip_address = None
+            self.ipv6_address = None
+            self.oui = None
+            self.manufacturer = None
+            self.hostnames = set()
+            self.vendor_class = None
+            self.services = set()
+            self.user_agents = set()
+            self.oses = set()
+            self.ttl = None
+            self.ports = set()
+            self.communicants = {}
+            self.count = 0
+            get_manufacturer(self)
+
+    def to_dict(self):
+        return {
+            '#': self.client_count,
+            'SOURCE': self.src_mac,
+            'IPv4': self.ip_address,
+            'IPv6': self.ipv6_address,
+            'MANUFACTURER': self.manufacturer,
+            'HOSTNAME': self.hostnames,
+            # 'SERVICES': ', '.join(f'{k}:{v}' for k, v in self.services.items()),
+            'SERVICES': self.services,
+            'TTL': self.ttl,
+            'OS': self.oses,
+            #'PORTS': ','.join(map(str, self.ports)),
+            'PORTS': self.ports,
+            'COUNTS': self.count
+            #'COMMUNICANTS': ', '.join(f'{k}: {v}' for k, v in self.communicants.items()),
+        }
+
+class StatusInfo:
+    def __init__(self, interface):
+        self.interface = interface
+        self.start_time = time.time()
+        self.status_message = ""
+        self.message_printed = False
+
+def debug_to_log(payload):
+    f_open = open('debug.log', 'ab')
+    f_open.write(payload)
+    f_open.close()
+
+def key_press_listener(action):
+
+    old_settings = termios.tcgetattr(sys.stdin)
+    try:
+        tty.setcbreak(sys.stdin.fileno())
+
+        while not flags.exit_flag:
+            if select.select([sys.stdin], [], [], 0.1)[0]:
+                key_pressed = sys.stdin.read(1)
+                if key_pressed:
+                    action(key_pressed)
+    finally:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+
+def handle_key_press(key):
+
+    if key == '\x1b':  # ESC key
+        print("ESC key pressed, exiting...")
+        flags.exit_flag = True
+        flags.q_pressed = True
+    elif key.isdigit():
+        if flags.key_code == int(key):
+            flags.key_code = None
+            flags.device_switch = False
+        else:
+            if flags.key_code is not None:
+                flags.device_switch = True
+            else:
+                flags.device_switch = False
+            flags.key_code = int(key)
+        flags.q_pressed = True
+    elif key == ' ':  # Checking for space bar key press
+        if flags.paused:
+            # If currently paused, unpause and restore any previously expanded device row
+            print("[-] Output unpaused")
+            flags.paused = False
+            if flags.paused_device_selected is not None:
+                flags.key_code = flags.paused_device_selected  # Restore the expanded view of the device
+                flags.paused_device_selected = None
+        else:
+            # If not currently paused, pause the output and remember any currently expanded device row
+            print("[+] Output paused")
+            flags.paused = True
+            if flags.key_code is not None:
+                flags.paused_device_selected = flags.key_code  # Remember the currently expanded device
+                flags.key_code = None  # No device row is expanded when paused
+        flags.q_pressed = True
+    elif key.lower() == 'q':  # Checking for 'c' or 'C'
+        if flags.q_pressed == True:
+            flags.exit_flag = True
+        else:
+            print("[!] Press 'q' again to quit. Press spacebar to continue.")
+            flags.paused = True
+            flags.q_pressed = True
+    else:
+        flags.q_pressed = True
+def display_devices(clients_dict, status_info):
+
+    # Define maximum widths for each column
+    max_widths = {
+        '#': 3, 'SOURCE': 19, 'IPv4': 14, 'IPv6': 35, 'MANUFACTURER': 25,
+        'HOSTNAME': 20, 'SERVICES': 20, 'TTL': 4, 'OS': 15, 'PORTS': 6, 'COUNTS': 6
+    }
+
+    # Define the header and row formats using the maximum widths
+    header_format = " ".join([f"{{:<{max_widths[col]}}}" for col in max_widths])
+    header = header_format.format(*max_widths.keys())
+    
+    while not flags.exit_flag:
+        if not flags.paused:
+            current_time = time.time()
+            elapsed_time = int(current_time - status_info.start_time)
+            elapsed_str = f"{elapsed_time // 60} min" if elapsed_time >= 60 else f"{elapsed_time} s"
+            current_date_time = time.strftime('%Y-%m-%d %H:%M', time.localtime())
+
+            if not flags.key_code:
+                status_info.status_message = ""
+                status_info.message_printed = False
+            if flags.device_switch:
+                status_info.status_message = ""
+                status_info.message_printed = False
+                flags.device_switch = False
+
+            status_line = f"{status_info.interface} ][ Elapsed: {elapsed_str} ][ {current_date_time} {status_info.status_message}"
+
+            sys.stdout.write('\x1b[2J\x1b[H')  # Clear screen and move cursor to top
+            sys.stdout.write(' ' + status_line + '\n\n')
+            # Print the header
+            sys.stdout.write(' ' + header + '\n')
+
+            # Iterate through the clients dictionary and print each row
+            for client_mac, client_data in clients_dict.items():
+                client_dict = client_data.to_dict()  # Convert the client object to a dictionary
+                
+                # Prepare each value, truncate if necessary, convert None to '', and ensure alignment
+                truncated_dict = {}
+                for k, v in client_dict.items():
+                    # If the field is one of 'OS', 'SERVICES', or 'PORTS' and is a set or list, take the first value
+                    if k in ['SERVICES', 'PORTS', 'OS', 'HOSTNAME']:
+                        if v:
+                            first_val = next(iter(v))  # Get the first value from the set/list
+                            truncated_dict[k] = str(first_val)[:max_widths[k]]
+                        else:
+                            truncated_dict[k] = ''  # Set to empty string if the set is empty
+                    else:
+                        truncated_dict[k] = (str(v)[:max_widths[k]] if v is not None else '')
+
+                # Format and print the row
+                formatted_row = header_format.format(*truncated_dict.values())
+                sys.stdout.write(' ' + formatted_row + '\n')
+                
+                if flags.key_code and client_dict["#"] == flags.key_code:
+                    if not status_info.message_printed:
+                        status_info.status_message += f"][ + Device {flags.key_code} expanded"
+                        status_info.message_printed = True
+                    max_additional_rows = max(len(client_dict.get('SERVICES', [])), len(client_dict.get('HOSTNAME', [])), len(client_dict.get('PORTS', [])), len(client_dict.get('OS', []))) - 1
+                    for i in range(max_additional_rows):
+                        additional_row = {k: '' for k in max_widths}  # Initialize with empty strings
+                        for k in ['HOSTNAME', 'SERVICES', 'PORTS', 'OS']:
+                            values = list(client_dict.get(k, []))
+                            if i + 1 < len(values):  # Check if there is a value to print in this additional row
+                                additional_row[k] = str(values[i + 1])[:max_widths[k]]
+                        # Format and print the additional row
+                        formatted_additional_row = header_format.format(*additional_row.values())
+                        sys.stdout.write(' ' + formatted_additional_row + '\n')
+
+            #sys.stdout.flush()
+            time.sleep(1)  # Update every second
+        else:
+            pass
+
+def is_multicast_or_broadcast(mac_address):
+    """Check if the MAC address is multicast or broadcast."""
+    if mac_address == 'ff:ff:ff:ff:ff:ff':
+        return True  # Broadcast address
+    # Split the MAC address string into octets and take the first one
+    first_octet_str = mac_address.split(':')[0]  # Assuming MAC address is separated by ':'
+    # Convert the first octet to an integer
+    first_octet_int = int(first_octet_str, 16)  # Convert from hexadecimal to integer
+    # Multicast address check (LSB of first octet is 1)
+    return (first_octet_int & 0x01) == 0x01
+
+def extract_os_from_user_agent(user_agent):
+    # If no OS match, try to return the portion inside the first set of parentheses
+    parenthetical_match = re.search(r'\(([^)]+)\)', user_agent)
+    if parenthetical_match:
+        return parenthetical_match.group(1)
+    
+    return ""
+
+def load_oui():
+    print('[+] Loading OUI tables')
+    try:
+        f_oui = open(oui_file, 'r')
+        for line in f_oui:
+            items = line.split(',')
+            oui_table[items[1].lower()] = items[2]
+    except FileNotFoundError:
+        print(f'[!] File Not Found: {oui_file}')
+
+def is_self_L2(packet_mac, iface_mac):
+    if packet_mac == iface_mac:
+        return True
+    else:
+        return False
+    
+def is_self_L2_L3(packet_mac, iface, packet_ip):
+
+    if packet_mac == iface.mac and packet_ip == iface.ip:
+        return True
+    else:
+        return False
+
+def is_private_ipv4(ip_str):
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        # Check if the IP address is private (10.x.x.x, 172.16.x.x - 172.31.x.x, 192.168.x.x)
+        if ip.is_private:
+            return True
+        # If the IP address is not private or reserved, it's considered public
+        return False
+    except ValueError:
+        # The input is not a valid IP address
+        return False
+    
+def add_port(src_port, cur_client):
+    if src_port < 5500:
+        cur_client.ports.add(src_port)
+
+def find_ua(payload, cur_client):
+    os_string = ""
+    user_agent = ""
+
+    user_agent_start = payload.find(b'User-Agent: ')
+    if user_agent_start != -1:  # User-Agent header found
+        # Find the end of the line starting from the User-Agent position
+        user_agent_end = payload.find(b'\r\n', user_agent_start)
+        if user_agent_end != -1:
+            # Extract the User-Agent value, excluding 'User-Agent: ' (12 bytes)
+            user_agent = payload[user_agent_start + 12:user_agent_end].decode('utf-8', 'ignore')
+            os_string = extract_os_from_user_agent(user_agent)
+    if user_agent:
+        cur_client.user_agents.add(user_agent)
+    if os_string:
+        cur_client.oses.add(os_string)
+
+def parse_packet(p, own_iface):
+
+    reader = BytesIO(p)
+    eth_header = parse_eth_header(reader)
+
+    if not is_self_L2(eth_header.src_mac, own_iface.mac):
+        if eth_header.src_mac not in clients:
+            cur_client = clients[eth_header.src_mac] = Client(eth_header.src_mac, flags.client_count)
+            flags.client_count += 1
+            if not is_multicast_or_broadcast(eth_header.dst_mac):
+                cur_client.communicants[eth_header.dst_mac] = None
+        else:
+            cur_client = clients.get(eth_header.src_mac)
+
+        cur_client.count += 1
+
+        if eth_header.eth_type == ARP_P:
+            arp_packet = parse_arp(reader)
+            process_arp(arp_packet, clients)
+
+        elif eth_header.eth_type == ETH_P:
+            
+            ip_header = parse_ip_header(reader)
+            cur_client.ttl = ip_header.ttl
+            if is_private_ipv4(ip_header.src_ip):
+                cur_client.ip_address = ip_header.src_ip
+
+            if ip_header.protocol == 17: # UDP
+                udp_header = parse_udp_header(reader)
+                payload = reader.read(udp_header.payload_length)
+                add_port(udp_header.src_port, cur_client)
+
+                if udp_header.src_port == 53: # DNS
+                    # dns_packet = parse_dns_packet(payload)
+                    pass
+
+                elif udp_header.src_port == 68:
+                    dhcp_packet = parse_dhcp_packet(payload)
+                    extract_dhcp_client_details(dhcp_packet, cur_client)
+                    
+                elif udp_header.dst_port == 5353: # MDNS
+                    mdns_packet = parse_dns_packet(payload)
+                    process_dns_packet(mdns_packet, cur_client)
+                    #print('\n')
+                    #print(mdns_packet)
+
+            elif ip_header.protocol == 6: # TCP
+                tcp_header = parse_tcp_header(reader)
+                tcp_header.payload_length = ip_header.total_length - ip_header.header_length - tcp_header.header_length
+                payload = reader.read(tcp_header.payload_length)
+                add_port(tcp_header.src_port, cur_client)
+
+                if tcp_header.dst_port == 80: # HTTP
+                    find_ua(payload, cur_client)
+                
+                if tcp_header.dst_port == 443: # HTTPS
+                    pass
+                
+                if tcp_header.src_port == 139:
+                    nbns_packet = parse_netbios_response(payload)
+            
+            elif ip_header.protocol == 2: # IGMP
+                igmp_payload_length = ip_header.total_length - ip_header.header_length
+                payload = reader.read(igmp_payload_length)
+                igmp_packet = parse_igmp(payload)
+
+        elif eth_header.eth_type == ETH_IPV6:
+            
+            ipv6_header = parse_ipv6_header(reader)
+            if not cur_client.ipv6_address:
+                cur_client.ipv6_address = ipv6_header.src_ipv6
+
+            if ipv6_header.next_header == 17: # UDP
+                udp_header = parse_udp_header(reader)
+                payload = reader.read(udp_header.payload_length)
+
+                if udp_header.src_port == 5353: # MDNS
+                    mdns_packet = parse_dns_packet(payload)
+                    process_dns_packet(mdns_packet, cur_client)
+                    #print('\n')
+                    #print(mdns_packet)
+
+                if udp_header.src_port == 546:
+                    dhcpv6_packet = parse_dhcpv6_packet(payload)
+
+            elif ipv6_header.next_header == 0: #ICMPv6
+                icmpv6_packet = parse_icmpv6(reader)
+
+# Consumer function to process packets
+def packet_consumer(iface, filename):
+    # global exit_flag
+    while not flags.exit_flag:
+        try:
+            pkt = packet_queue.get(timeout=1)  # Timeout ensures that the loop checks the flag periodically
+            parse_packet(pkt, iface)
+            if filename:
+                write_packet(pkt, filename)
+            packet_queue.task_done()
+        except queue.Empty:
+            continue  # Continue checking the flag if the queue is empty
+
+# Producer function to read packets
+def packet_producer(iface):
+    # global exit_flag
+    s = None
+    try:
+        s = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_ALL))
+        s.bind((iface.interface_name, 0))
+        print('[.] Listening for packets....')
+
+        while not flags.exit_flag:
+            pkt, addr = s.recvfrom(4096)
+            packet_queue.put(pkt)
+    
+    except KeyboardInterrupt:
+        flags.exit_flag = True  # Signal all threads to exit
+        print('\nExiting...')
+    except PermissionError:
+        print('Permission Error: This script must be run with sudo.')
+    except OSError:
+        print(f'Error: Issue opening the sockeet on {iface.interface_name}.')
+    finally:
+        if s:
+            s.close()
+
+def write_packet(p, filename):
+
+    # Get the current time
+    current_time = time.time()
+
+    # Split the time into seconds and microseconds
+    ts_seconds = int(current_time)
+    ts_microseconds = int((current_time - ts_seconds) * 1_000_000)
+
+    packet_length = len(p)
+    packet_header = struct.pack('IIII', ts_seconds, ts_microseconds, packet_length, packet_length)
+    f_out = open(filename, 'ab')
+    f_out.write(packet_header)
+    f_out.write(p)
+    f_out.close()
+
+def write_header(filename):
+    f_out = open(filename, "wb")
+
+    f_out.write(PCAP_GLOBAL_HEADER_ETHERNET)
+    f_out.close()
+
+if __name__ == "__main__":
+
+    ed_argparse = argparse.ArgumentParser(prog='ethodump-ng', description='An Ethernet packet sniffing tool.')
+    ed_argparse.version = '1.0'
+    ed_argparse.add_argument('-i', '--interface', action='store', type=str, help='Enter the interface on which you want to sniff.', required=True)
+    ed_argparse.add_argument('-w', '--write', action='store', type=str, help='Pass the file name to write packets.', required=False)
+    ed_argparse.add_argument('-d', '--debug', action='store_true', help='Set the script debug to verbose.', required=False, default=False)
+    ed_argparse.add_argument('-v', '--version', action='version')
+
+    args = ed_argparse.parse_args()
+
+    load_oui()
+
+    iface = interface(args.interface)
+
+    status_info = StatusInfo(args.interface)
+
+    flags = Flags()
+
+    # Initialize the queue
+    packet_queue = queue.Queue(QUEUE_SIZE)
+
+     # Number of consumer threads
+    num_workers = 4
+
+    if args.write:
+        write_header(args.write)
+
+    # Start consumer threads
+    for _ in range(num_workers):
+        worker_thread = threading.Thread(target=packet_consumer, args=(iface, args.write,))
+        worker_thread.daemon = True  # Daemon threads exit when the main program does
+        worker_thread.start()
+
+    # Start the producer thread
+    producer_thread = threading.Thread(target=packet_producer, args=(iface,))
+    producer_thread.daemon = True
+    producer_thread.start()
+
+    if not args.debug:
+        # Start the display thread
+        display_thread = threading.Thread(target=display_devices, args=(clients, status_info,))
+        display_thread.daemon = True  # Daemon thread will exit when main program exits
+        display_thread.start()
+
+    # Start the key press listener thread
+    listener_thread = threading.Thread(target=key_press_listener, args=(handle_key_press,))
+    listener_thread.daemon = True  # Daemon threads will be killed when the main thread exits
+    listener_thread.start()
+
+    try:
+        # Wait for threads to exit gracefully
+        while threading.active_count() > 1:
+            for thread in threading.enumerate():
+                if thread is not threading.current_thread():
+                    thread.join(timeout=0)
+    except KeyboardInterrupt:
+        flags.exit_flag = True  # Signal all threads to exit
+        print("\nSignal received, shutting down...")
+
