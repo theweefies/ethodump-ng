@@ -23,7 +23,6 @@ class DNSHeader:
     num_answers: int = 0
     num_authorities: int = 0
     num_additionals: int = 0
-    record_count = 0
 
 @dataclass
 class DNSANY:
@@ -149,18 +148,21 @@ def extract_service_name(name: bytes) -> str:
         return service_match.group(1)  # Service name without the leading '_'
     return ""
 
-def parse_txt(record):
-    key_markers = ["fv", "model", "manufacturer", "serialNumber"]
+def parse_txt(record, cur_client):
+    key_markers = [b"fv", b"model", b"manufacturer", b"serialNumber", b"title", b"type", b"tech"]
     for entry in record.txt_data:
         k, v = entry.split(b'=')
-
+        if k in key_markers:
+            cur_client.connections.add(v.decode('utf-8','ignore'))
         # print('Key: ', k.decode('utf-8','ignore'))
         # print('Value: ', v.decode('utf-8','ignore'))
 
 def process_dns_packet(packet: DNSPacket, cur_client):
+    service_restricted_names = ["Spotify", "google", "localhost"]
     hostnames = set()
     services = set()
     ports = set()
+    hostname = None
 
     # Extract service names from queries or answers that start with '_'
     for question in packet.questions:
@@ -170,70 +172,49 @@ def process_dns_packet(packet: DNSPacket, cur_client):
                 services.add(service_name)
         elif question.type_ == DNS_ANY:
             hostname = extract_hostname(question.name)
-            if hostname:
+            if hostname and len(hostname) > 3:
                 hostnames.add(hostname)
 
     # Process records in answers for hostnames
     for answer in packet.answers:
-        """if answer.type_ == DNS_PTR and answer.domain_name:
-            hostname = extract_hostname(answer.domain_name)   # This is actually probably not the domain
-            if hostname:                                      # for the responding device
-                hostnames.add(hostname)"""
         if answer.type_ == DNS_TXT:
             hostname = extract_hostname(answer.name)
-            if hostname:
-                hostnames.add(hostname)
-            parse_txt(additional)
+            parse_txt(answer, cur_client)
         if answer.type_ == DNS_SRV: # type 33 is for SRV records
-            if answer.name:  
-                hostname = extract_hostname(answer.name)
-                if hostname:
-                    hostnames.add(hostname)
+            hostname = extract_hostname(answer.name)
             if answer.port:
                 ports.add(answer.port)
         if answer.type_ == DNS_A:
             hostname = extract_hostname(answer.name)
-            if hostname:
-                hostnames.add(hostname)
             if not cur_client.ip_address:
                 cur_client.ip_address = answer.address
         if answer.type_ == DNS_AAAA:
             hostname = extract_hostname(answer.name)
-            if hostname:
-                hostnames.add(hostname)
             if not cur_client.ipv6_address:
                 cur_client.ipv6_address = answer.address
+        if hostname and len(hostname) > 3:
+            hostnames.add(hostname)
 
     # Process records in additionals for hostnames
     for additional in packet.additionals:
-        """if additional.type_ == DNS_PTR and additional.domain_name:
-            hostname = extract_hostname(additional.domain_name)   # This is actually probably not the domain
-            if hostname:                                      # for the responding device
-                hostnames.add(hostname)"""
         if additional.type_ == DNS_TXT:
             hostname = extract_hostname(additional.name)
-            if hostname:
-                hostnames.add(hostname)
-            parse_txt(additional)
+            parse_txt(additional, cur_client)
         if additional.type_ == DNS_SRV: # type 33 is for SRV records
             if additional.name:  
                 hostname = extract_hostname(additional.name)
-                if hostname:
-                    hostnames.add(hostname)
             if additional.port:
                 ports.add(additional.port)
         if additional.type_ == DNS_A:
             hostname = extract_hostname(additional.name)
-            if hostname:
-                hostnames.add(hostname)
             if not cur_client.ip_address:
                 cur_client.ip_address = additional.address
         if additional.type_ == DNS_AAAA:
             hostname = extract_hostname(additional.name)
-            if hostname:
-                hostnames.add(hostname)
             if not cur_client.ipv6_address:
                 cur_client.ipv6_address = additional.address
+        if hostname and len(hostname) > 3:
+            hostnames.add(hostname)
 
     # Remove empty strings
     hostnames.discard("")
@@ -242,7 +223,12 @@ def process_dns_packet(packet: DNSPacket, cur_client):
     for port in ports:
         cur_client.ports.add(port)
     for hostname in hostnames:
-        cur_client.hostnames.add(hostname)
+        # Convert hostname to lowercase to make the search case-insensitive
+        lowercase_hostname = hostname.lower()
+        # Check if any restricted name is in the hostname
+        if not any(restricted_name.lower() in lowercase_hostname for restricted_name in service_restricted_names):
+            sanitized_hostname = hostname.replace('(','').replace(')','')
+            cur_client.hostnames.add(sanitized_hostname)
     for service in services:
         cur_client.services.add(service)
 

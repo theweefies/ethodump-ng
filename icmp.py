@@ -14,7 +14,6 @@ class ICMP:
     id: int
     seq: int
     timestamp: float
-    data: bytes
 
 @dataclass
 class MulticastAddressRecord:
@@ -32,9 +31,20 @@ class ICMPv6:
     num_multicast_address_records: int
     multicast_address_records: List[MulticastAddressRecord] = field(default_factory=list)
 
+def parse_icmp(reader) -> ICMP:
+    icmp_header = reader.read(10)
+    if len(icmp_header) < 10:
+        return None
+    type_, code, checksum, id, seq, timestamp = struct.unpack('!BBHHI', icmp_header)
+    
+    return ICMP(type_, code, checksum, id, seq, timestamp)
+
 def parse_icmpv6(reader) -> ICMPv6:
     # Read the ICMPv6 header fields
     icmpv6_header = reader.read(8)
+    if len(icmpv6_header) < 8:
+        return None
+    
     type_, code = struct.unpack('!BB', icmpv6_header[:2])
     checksum = icmpv6_header[2:4]
     reserved = icmpv6_header[4:6]

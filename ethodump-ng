@@ -26,19 +26,12 @@ from dhcp import parse_dhcp_packet, parse_dhcpv6_packet, extract_dhcp_client_det
 from tcp_udp import parse_eth_header, parse_ip_header, \
     parse_tcp_header, parse_udp_header, parse_ipv6_header
 from igmp import parse_igmp
-from icmp import parse_icmpv6
-from netbios import parse_netbios_response
-from globals import Client, get_manufacturer, oui_table, oui_file
-
-ETH_P = b'\x08\x00'
-ETH_IPV6 = b'\x86\xDD'
-ARP_P = b'\x08\x06'
-ETH_P_ALL = 0x0003
-
-# Standard 80211 pcap global header (24 bytes)
-PCAP_GLOBAL_HEADER_ETHERNET = b'\xd4\xc3\xb2\xa1\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\x00\x00\x01\x00\x00\x00'
-
-QUEUE_SIZE = 1000
+from icmp import parse_icmp, parse_icmpv6
+from netbios import parse_netbios_packet
+from ssdp import parse_ssdp_packet
+from globals import Client, oui_table, oui_file, clients
+from globals import ETH_P, ARP_P, ETH_P_ALL, ETH_IPV6
+from globals import PCAP_GLOBAL_HEADER_ETHERNET, QUEUE_SIZE
 
 # Global flag to signal threads to exit
 class Flags:
@@ -50,8 +43,6 @@ class Flags:
         self.paused_device_selected = None
         self.device_switch = False
         self.q_pressed = False
-
-clients = {}
 
 class interface:
     interface_name = None
@@ -73,42 +64,6 @@ class interface:
         self.mac = netifaces.ifaddresses(self.interface_name)[netifaces.AF_LINK][0]['addr']
         self.ip = netifaces.ifaddresses(self.interface_name)[netifaces.AF_INET][0]['addr']
 
-class Client:
-    def __init__(self, src_mac, client_ct):
-            self.client_count = client_ct
-            self.src_mac = src_mac
-            self.ip_address = None
-            self.ipv6_address = None
-            self.oui = None
-            self.manufacturer = None
-            self.hostnames = set()
-            self.vendor_class = None
-            self.services = set()
-            self.user_agents = set()
-            self.oses = set()
-            self.ttl = None
-            self.ports = set()
-            self.communicants = {}
-            self.count = 0
-            get_manufacturer(self)
-
-    def to_dict(self):
-        return {
-            '#': self.client_count,
-            'SOURCE': self.src_mac,
-            'IPv4': self.ip_address,
-            'IPv6': self.ipv6_address,
-            'MANUFACTURER': self.manufacturer,
-            'HOSTNAME': self.hostnames,
-            # 'SERVICES': ', '.join(f'{k}:{v}' for k, v in self.services.items()),
-            'SERVICES': self.services,
-            'TTL': self.ttl,
-            'OS': self.oses,
-            #'PORTS': ','.join(map(str, self.ports)),
-            'PORTS': self.ports,
-            'COUNTS': self.count
-            #'COMMUNICANTS': ', '.join(f'{k}: {v}' for k, v in self.communicants.items()),
-        }
 
 class StatusInfo:
     def __init__(self, interface):
@@ -183,7 +138,7 @@ def display_devices(clients_dict, status_info):
     # Define maximum widths for each column
     max_widths = {
         '#': 3, 'SOURCE': 19, 'IPv4': 14, 'IPv6': 35, 'MANUFACTURER': 25,
-        'HOSTNAME': 20, 'SERVICES': 20, 'TTL': 4, 'OS': 15, 'PORTS': 6, 'COUNTS': 6
+        'HOSTNAME': 20, 'SERVICES': 20, 'TTL': 4, 'OS': 15, 'CONNECTIONS': 15, 'PORTS': 6, 'COUNTS': 6
     }
 
     # Define the header and row formats using the maximum widths
@@ -220,7 +175,7 @@ def display_devices(clients_dict, status_info):
                 truncated_dict = {}
                 for k, v in client_dict.items():
                     # If the field is one of 'OS', 'SERVICES', or 'PORTS' and is a set or list, take the first value
-                    if k in ['SERVICES', 'PORTS', 'OS', 'HOSTNAME']:
+                    if k in ['SERVICES', 'PORTS', 'OS', 'HOSTNAME', 'CONNECTIONS']:
                         if v:
                             first_val = next(iter(v))  # Get the first value from the set/list
                             truncated_dict[k] = str(first_val)[:max_widths[k]]
@@ -237,10 +192,10 @@ def display_devices(clients_dict, status_info):
                     if not status_info.message_printed:
                         status_info.status_message += f"][ + Device {flags.key_code} expanded"
                         status_info.message_printed = True
-                    max_additional_rows = max(len(client_dict.get('SERVICES', [])), len(client_dict.get('HOSTNAME', [])), len(client_dict.get('PORTS', [])), len(client_dict.get('OS', []))) - 1
+                    max_additional_rows = max(len(client_dict.get('SERVICES', [])), len(client_dict.get('HOSTNAME', [])), len(client_dict.get('PORTS', [])), len(client_dict.get('OS', [])), len(client_dict.get('CONNECTIONS', []))) - 1
                     for i in range(max_additional_rows):
                         additional_row = {k: '' for k in max_widths}  # Initialize with empty strings
-                        for k in ['HOSTNAME', 'SERVICES', 'PORTS', 'OS']:
+                        for k in ['HOSTNAME', 'SERVICES', 'PORTS', 'OS', 'CONNECTIONS']:
                             values = list(client_dict.get(k, []))
                             if i + 1 < len(values):  # Check if there is a value to print in this additional row
                                 additional_row[k] = str(values[i + 1])[:max_widths[k]]
@@ -347,11 +302,12 @@ def parse_packet(p, own_iface):
         if eth_header.eth_type == ARP_P:
             arp_packet = parse_arp(reader)
             process_arp(arp_packet, clients)
+            return
 
         elif eth_header.eth_type == ETH_P:
             
             ip_header = parse_ip_header(reader)
-            cur_client.ttl = ip_header.ttl
+            
             if is_private_ipv4(ip_header.src_ip):
                 cur_client.ip_address = ip_header.src_ip
 
@@ -362,19 +318,29 @@ def parse_packet(p, own_iface):
 
                 if udp_header.src_port == 53: # DNS
                     # dns_packet = parse_dns_packet(payload)
-                    pass
-
+                    return
+                
                 elif udp_header.src_port == 68:
                     dhcp_packet = parse_dhcp_packet(payload)
                     extract_dhcp_client_details(dhcp_packet, cur_client)
+                    return
+
+                elif udp_header.src_port == 137 or udp_header.dst_port == 137:
+                    nbns_packet = parse_netbios_packet(payload, cur_client)
+                    # print(nbns_packet)
+                    return
+
+                elif udp_header.dst_port == 1900:
+                    ssdp_packet = parse_ssdp_packet(payload)
+                    return
                     
                 elif udp_header.dst_port == 5353: # MDNS
                     mdns_packet = parse_dns_packet(payload)
                     process_dns_packet(mdns_packet, cur_client)
-                    #print('\n')
-                    #print(mdns_packet)
+                    return
 
             elif ip_header.protocol == 6: # TCP
+                cur_client.ttl = ip_header.ttl
                 tcp_header = parse_tcp_header(reader)
                 tcp_header.payload_length = ip_header.total_length - ip_header.header_length - tcp_header.header_length
                 payload = reader.read(tcp_header.payload_length)
@@ -382,18 +348,27 @@ def parse_packet(p, own_iface):
 
                 if tcp_header.dst_port == 80: # HTTP
                     find_ua(payload, cur_client)
+                    return
                 
                 if tcp_header.dst_port == 443: # HTTPS
-                    pass
+                    return
                 
                 if tcp_header.src_port == 139:
-                    nbns_packet = parse_netbios_response(payload)
-            
+                    nbns_packet = parse_netbios_packet(payload, cur_client)
+                    return
+                
             elif ip_header.protocol == 2: # IGMP
                 igmp_payload_length = ip_header.total_length - ip_header.header_length
                 payload = reader.read(igmp_payload_length)
                 igmp_packet = parse_igmp(payload)
-
+                return
+            
+            elif ip_header.protocol == 1: # ICMP
+                icmp_payload_length = ip_header.total_length - ip_header.header_length
+                payload = reader.read(icmp_payload_length)
+                icmp_packet = parse_icmp(payload)
+                return
+            
         elif eth_header.eth_type == ETH_IPV6:
             
             ipv6_header = parse_ipv6_header(reader)
@@ -407,15 +382,16 @@ def parse_packet(p, own_iface):
                 if udp_header.src_port == 5353: # MDNS
                     mdns_packet = parse_dns_packet(payload)
                     process_dns_packet(mdns_packet, cur_client)
-                    #print('\n')
-                    #print(mdns_packet)
-
+                    return
+                
                 if udp_header.src_port == 546:
                     dhcpv6_packet = parse_dhcpv6_packet(payload)
-
+                    return
+                
             elif ipv6_header.next_header == 0: #ICMPv6
                 icmpv6_packet = parse_icmpv6(reader)
-
+                return
+            
 # Consumer function to process packets
 def packet_consumer(iface, filename):
     # global exit_flag
@@ -439,7 +415,7 @@ def packet_producer(iface):
         print('[.] Listening for packets....')
 
         while not flags.exit_flag:
-            pkt, addr = s.recvfrom(4096)
+            pkt, addr = s.recvfrom(8192)
             packet_queue.put(pkt)
     
     except KeyboardInterrupt:
@@ -448,7 +424,7 @@ def packet_producer(iface):
     except PermissionError:
         print('Permission Error: This script must be run with sudo.')
     except OSError:
-        print(f'Error: Issue opening the sockeet on {iface.interface_name}.')
+        print(f'Error: Issue opening the socket on {iface.interface_name}.')
     finally:
         if s:
             s.close()
@@ -534,4 +510,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         flags.exit_flag = True  # Signal all threads to exit
         print("\nSignal received, shutting down...")
+
+    for client in clients:
+        print(clients[client])
 

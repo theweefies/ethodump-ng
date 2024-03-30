@@ -2,6 +2,17 @@
 
 import socket
 
+ETH_P = b'\x08\x00'
+ETH_IPV6 = b'\x86\xDD'
+ARP_P = b'\x08\x06'
+ETH_P_ALL = 0x0003
+
+# Standard 80211 pcap global header (24 bytes)
+PCAP_GLOBAL_HEADER_ETHERNET = b'\xd4\xc3\xb2\xa1\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\x00\x00\x01\x00\x00\x00'
+
+QUEUE_SIZE = 1000
+
+clients = {}
 oui_table = {}
 oui_file = "oui.csv"
 
@@ -28,7 +39,7 @@ def get_manufacturer(self):
     if self.src_mac:
         self.oui = self.src_mac.replace(':', '')[:6]
         if self.oui in oui_table:
-            self.manufacturer = oui_table[self.oui]
+            self.manufacturer = oui_table[self.oui].replace('"','')
         else:
             self.manufacturer = 'Unknown'
 
@@ -48,8 +59,32 @@ class Client:
             self.ttl = None
             self.ports = set()
             self.communicants = {}
+            self.connections = set()
             self.count = 0
             get_manufacturer(self)
+
+    def __str__(self):
+        # Create a list of formatted strings for each attribute
+        attributes = [
+            f"Client Count: {self.client_count}",
+            f"Source MAC: {self.src_mac}",
+            f"IP Address: {self.ip_address}",
+            f"IPv6 Address: {self.ipv6_address}",
+            f"OUI: {self.oui}",
+            f"Manufacturer: {self.manufacturer}",
+            f"Hostnames: {', '.join(self.hostnames)}",
+            f"Vendor Class: {self.vendor_class}",
+            f"Services: {', '.join(self.services)}",
+            f"User Agents: {', '.join(self.user_agents)}",
+            f"Operating Systems: {', '.join(self.oses)}",
+            f"TTL: {self.ttl}",
+            f"Ports: {', '.join(map(str, self.ports))}",
+            f"Communicants: {', '.join(f'{k}: {v}' for k, v in self.communicants.items())}",
+            f"Connections: {', '.join(self.connections)}",
+            f"Count: {self.count}"
+        ]
+        # Join all the attribute strings with newlines for pretty printing
+        return "\n".join(attributes)
 
     def to_dict(self):
         return {
@@ -62,7 +97,7 @@ class Client:
             'SERVICES': self.services,
             'TTL': self.ttl,
             'OS': self.oses,
+            'CONNECTIONS': self.connections,
             'PORTS': self.ports,
             'COUNTS': self.count
-            #'COMMUNICANTS': ', '.join(f'{k}: {v}' for k, v in self.communicants.items()),
         }
