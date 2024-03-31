@@ -74,6 +74,7 @@ class Client:
             self.connections = set()
             self.resource_urls = set()
             self.protocols = set()
+            self.fingerprints = {"dhcp":None, "tcp":None}
             self.count = 0
             get_manufacturer(self)
 

@@ -9,6 +9,7 @@ import struct
 import socket
 
 from globals import bytes_to_mac, clean_name
+from models import dhcp_fingerprints
 
 DHCP_HNAME_OPT      = 12
 DHCP_VCLASS_OPT     = 60
@@ -37,6 +38,20 @@ class DHCPv6Packet:
     message_type: int
     transaction_id: bytes
     options: List[Tuple[int, bytes]] = field(default_factory=list)  # Option code and option data
+
+def match_dhcp_fingerprint(packet: DHCPPacket, cur_client):
+    global dhcp_fingerprints
+    # Step 1: Form the DHCP Options String
+    # Sort the option numbers and form a comma-separated string
+    options_string = ','.join(str(option[0]) for option in sorted(packet.options))
+    cur_client.fingerprints["dhcp"] = options_string
+    
+    # Step 2: Compare with Fingerprint Dictionary
+    for fingerprint_key, fingerprint_value in dhcp_fingerprints.items():
+        if options_string == fingerprint_value[1]:
+            cur_client.oses.add(fingerprint_value[0])
+
+    return None  # Return None if no match is found
 
 # Example function to parse DHCPv6 options from the packet payload
 def parse_dhcpv6_options(payload: bytes) -> List[Tuple[int, bytes]]:

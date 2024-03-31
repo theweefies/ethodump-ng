@@ -22,7 +22,8 @@ import select
 
 from arp import parse_arp, process_arp
 from dns import parse_dns_packet, process_dns_packet
-from dhcp import parse_dhcp_packet, parse_dhcpv6_packet, extract_dhcp_client_details
+from dhcp import parse_dhcp_packet, parse_dhcpv6_packet, \
+    extract_dhcp_client_details, match_dhcp_fingerprint
 from tcp_udp import parse_eth_header, parse_ip_header, \
     parse_tcp_header, parse_udp_header, parse_ipv6_header
 from igmp import parse_igmp
@@ -325,6 +326,7 @@ def parse_packet(p, own_iface):
                 
                 elif udp_header.src_port == 68:
                     dhcp_packet = parse_dhcp_packet(payload)
+                    match_dhcp_fingerprint(dhcp_packet, cur_client)
                     extract_dhcp_client_details(dhcp_packet, cur_client)
                     cur_client.protocols.add('DHCP')
                     return
