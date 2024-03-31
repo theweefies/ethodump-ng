@@ -98,6 +98,7 @@ class Client:
             f"Connections: {', '.join(self.connections)}",
             f"Resource URLs: \r\n" + '\r\n'.join(self.resource_urls),
             f"Protocols: {', '.join(self.protocols)}",
+            ', '.join([f"{protocol.upper()} Fingerprint: {fingerprint if fingerprint else 'Not Available'}" for protocol, fingerprint in self.fingerprints.items()]),
             f"Count: {self.count}"
         ]
         # Join all the attribute strings with newlines for pretty printing

@@ -41,17 +41,21 @@ class DHCPv6Packet:
 
 def match_dhcp_fingerprint(packet: DHCPPacket, cur_client):
     global dhcp_fingerprints
-    # Step 1: Form the DHCP Options String
-    # Sort the option numbers and form a comma-separated string
-    options_string = ','.join(str(option[0]) for option in sorted(packet.options))
-    cur_client.fingerprints["dhcp"] = options_string
-    
-    # Step 2: Compare with Fingerprint Dictionary
-    for fingerprint_key, fingerprint_value in dhcp_fingerprints.items():
-        if options_string == fingerprint_value[1]:
-            cur_client.oses.add(fingerprint_value[0])
+    parameter_request_list = None
 
-    return None  # Return None if no match is found
+    # Step 1: Find Option 53 (Parameter Request List) and form the fingerprint string
+    for option in packet.options:
+        if option[0] == 55:  # DHCP Option Code 55 for Parameter Request List
+            parameter_request_list = ','.join(str(param) for param in option[1])
+            break
+
+    if parameter_request_list:
+        cur_client.fingerprints["dhcp"] = parameter_request_list
+        
+        # Step 2: Compare with Fingerprint Dictionary
+        for fingerprint_key, fingerprint_value in dhcp_fingerprints.items():
+            if parameter_request_list == fingerprint_value[1]:
+                cur_client.oses.add(fingerprint_value[0])
 
 # Example function to parse DHCPv6 options from the packet payload
 def parse_dhcpv6_options(payload: bytes) -> List[Tuple[int, bytes]]:
