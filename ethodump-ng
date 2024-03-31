@@ -134,8 +134,9 @@ def handle_key_press(key):
             flags.q_pressed = True
     else:
         flags.q_pressed = True
-def display_devices(clients_dict, status_info):
 
+def display_devices(clients_, status_info):
+    
     # Define maximum widths for each column
     max_widths = {
         '#': 3, 'SOURCE': 19, 'IPv4': 14, 'IPv6': 30, 'MANUFACTURER': 20,
@@ -147,6 +148,9 @@ def display_devices(clients_dict, status_info):
     header = header_format.format(*max_widths.keys())
     
     while not flags.exit_flag:
+
+        clients_dict = clients_.copy()
+
         if not flags.paused:
             current_time = time.time()
             elapsed_time = int(current_time - status_info.start_time)
@@ -167,7 +171,7 @@ def display_devices(clients_dict, status_info):
             sys.stdout.write(' ' + status_line + '\n\n')
             # Print the header
             sys.stdout.write(' ' + header + '\n')
-
+            
             # Iterate through the clients dictionary and print each row
             for client_mac, client_data in clients_dict.items():
                 client_dict = client_data.to_dict()  # Convert the client object to a dictionary
