@@ -33,17 +33,7 @@ from ssdp import parse_ssdp_packet
 from globals import Client, oui_table, oui_file, clients
 from globals import ETH_P, ARP_P, ETH_P_ALL, ETH_IPV6
 from globals import PCAP_GLOBAL_HEADER_ETHERNET, QUEUE_SIZE
-
-# Global flag to signal threads to exit
-class Flags:
-    def __init__(self):         
-        self.exit_flag = False
-        self.key_code = None
-        self.client_count = 1
-        self.paused = False
-        self.paused_device_selected = None
-        self.device_switch = False
-        self.q_pressed = False
+from globals import Flags
 
 class interface:
     interface_name = None

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 
+"""
+TCP, UDP, IPv4 and IPv6 dataclass, parsing & processing
+module for ethodump-ng 
+"""
+
 import struct
 from dataclasses import dataclass
 from io import BytesIO

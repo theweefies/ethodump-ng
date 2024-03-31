@@ -17,35 +17,49 @@ clients = {}
 oui_table = {}
 oui_file = "oui.csv"
 
-def bytes_to_mac(bytes):
+def bytes_to_mac(bytes: bytes) -> str:
     """
     Converts a bytes MAC to a colon delimited string.
     """
     return ':'.join('{:02x}'.format(b) for b in bytes)
 
-def bytes_to_ip(bytes):
-
+def bytes_to_ip(bytes: bytes) -> str:
+    """
+    Converts a 4-byte sequence to an IPv4 string
+    """
     return socket.inet_ntoa(bytes)
 
-def bytes_to_ipv6(bytes):
-
+def bytes_to_ipv6(bytes: bytes) -> str:
+    """
+    Converts a 16-byte seqence to an IPv6 string
+    """
     return socket.inet_ntop(socket.AF_INET6, bytes)
 
-def debug_to_log(payload):
+def debug_to_log(payload: bytes) -> None:
+    """
+    Function to log debug data to a log file
+    """
     f_open = open('debug.log', 'ab')
     f_open.write(payload)
     f_open.close()
 
-def get_manufacturer(self):
-    if self.src_mac:
-        self.oui = self.src_mac.replace(':', '')[:6]
-        if self.oui in oui_table:
-            self.manufacturer = oui_table[self.oui].replace('"','')
-        else:
-            self.manufacturer = 'Unknown'
+def is_utf8_decodable(val: bytes) -> str | bool:
+    """
+    Function to attempt utf decoding.
+    """
+    if not val:
+        return False
+    try:
+        # Attempt to decode the client_id as UTF-8
+        decoded = val.decode('utf-8','ignore')
+        return decoded  # Decoding succeeded, so it's a UTF-8 string
+    except UnicodeDecodeError:
+        return False  # Decoding failed, so it's not a UTF-8 string
 
-
-def clean_name(name):
+def clean_name(name: str) -> str:
+    """
+    Function to remove whitespace and non-printable chars from a string
+    """
     # Remove leading and trailing whitespace
     cleaned = name.strip()
 
@@ -55,8 +69,26 @@ def clean_name(name):
 
     return cleaned
 
+# Global flag to signal threads to exit
+class Flags:
+    """
+    A class to manage global flags, signals, and output
+    control flags.
+    """
+    def __init__(self):         
+        self.exit_flag = False
+        self.key_code = None
+        self.client_count = 1
+        self.paused = False
+        self.paused_device_selected = None
+        self.device_switch = False
+        self.q_pressed = False
+
 class Client:
-    def __init__(self, src_mac, client_ct):
+    """
+    A class to manage client data.
+    """
+    def __init__(self, src_mac: str, client_ct: int):
             self.client_count = client_ct
             self.src_mac = src_mac
             self.ip_address = None
@@ -79,6 +111,9 @@ class Client:
             get_manufacturer(self)
 
     def __str__(self):
+        """
+        Overrides the string method to provide attribute printing.
+        """
         # Create a list of formatted strings for each attribute
         attributes = [
             "\n" + f"Client Count: {self.client_count}",
@@ -104,7 +139,10 @@ class Client:
         # Join all the attribute strings with newlines for pretty printing
         return "\n".join(attributes)
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
+        """
+        Converts the class to a dictionary
+        """
         return {
             '#': self.client_count,
             'SOURCE': self.src_mac,
@@ -119,3 +157,14 @@ class Client:
             'PORTS': self.ports,
             'COUNTS': self.count
         }
+
+def get_manufacturer(self: Client) -> None:
+    """
+    Function to get do OUI -> Manufacture resolution for the Client class.
+    """
+    if self.src_mac:
+        self.oui = self.src_mac.replace(':', '')[:6]
+        if self.oui in oui_table:
+            self.manufacturer = oui_table[self.oui].replace('"','')
+        else:
+            self.manufacturer = 'Unknown'

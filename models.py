@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+"""
+Model signature and fingerprinting hashtables for ethodump-ng
+"""
+
 blackberry_models = {
 "0x8f000d03":"BlackBerry 8110",
 "0x8d000d03":"BlackBerry 8120",

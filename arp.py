@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from globals import bytes_to_ip, bytes_to_mac, Client
 from io import BytesIO
 
+from globals import Flags
+
 ARP_REQUEST = 1
 ARP_REPLY = 2
 
@@ -41,7 +43,11 @@ def parse_arp(reader: BytesIO) -> ARP | None:
     return ARP(hardware_type, protocol, hardware_size, protocol_size, \
                opcode, sender_mac, sender_ip, target_mac, target_ip)
 
-def process_arp(arp_packet, clients, flags):
+def process_arp(arp_packet: ARP, clients: dict, flags: Flags) -> None:
+    """
+    ARP Processing to glean layer 2 and 3 addressing to populate
+    client information.
+    """
     # Check if the sender is in the clients dictionary
     sender = clients.get(arp_packet.sender_mac)
 

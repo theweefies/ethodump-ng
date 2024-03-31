@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-DHCP Module for ethodump-ng.
+DHCP (& v6) Module for ethodump-ng.
 """
-from dataclasses import dataclass, field
-from typing import List, Tuple
-from io import BytesIO
 import struct
 import socket
 
-from globals import bytes_to_mac, clean_name
+from io import BytesIO
+from typing import List, Tuple
+from dataclasses import dataclass, field
+
+from globals import bytes_to_mac, clean_name, is_utf8_decodable, Client
 from models import dhcp_fingerprints
 
 DHCP_HNAME_OPT      = 12
@@ -39,7 +40,11 @@ class DHCPv6Packet:
     transaction_id: bytes
     options: List[Tuple[int, bytes]] = field(default_factory=list)  # Option code and option data
 
-def match_dhcp_fingerprint(packet: DHCPPacket, cur_client):
+def match_dhcp_fingerprint(packet: DHCPPacket, cur_client: Client) -> None:
+    """
+    Function to match a current client's dhcp parameter list fingerprint
+    against the database in models.py
+    """
     global dhcp_fingerprints
     parameter_request_list = None
 
@@ -57,8 +62,10 @@ def match_dhcp_fingerprint(packet: DHCPPacket, cur_client):
             if parameter_request_list == fingerprint_value[1]:
                 cur_client.oses.add(fingerprint_value[0])
 
-# Example function to parse DHCPv6 options from the packet payload
 def parse_dhcpv6_options(payload: bytes) -> List[Tuple[int, bytes]]:
+    """
+    Function to parse DHCPv6 options from the dhcp payload
+    """
     options = []
     reader = BytesIO(payload)
     
@@ -76,18 +83,10 @@ def parse_dhcpv6_options(payload: bytes) -> List[Tuple[int, bytes]]:
 
     return options
 
-def is_utf8_decodable(val):
-    if not val:
-        return False
-    try:
-        # Attempt to decode the client_id as UTF-8
-        decoded = val.decode('utf-8','ignore')
-        return decoded  # Decoding succeeded, so it's a UTF-8 string
-    except UnicodeDecodeError:
-        return False  # Decoding failed, so it's not a UTF-8 string
-
-# Example of parsing a DHCPv6 packet and its options
 def parse_dhcpv6_packet(data: bytes) -> DHCPv6Packet:
+    """
+    Function to parse DHCPv6 packet.
+    """
     reader = BytesIO(data)
     
     # Read the DHCPv6 packet header fields
@@ -100,7 +99,11 @@ def parse_dhcpv6_packet(data: bytes) -> DHCPv6Packet:
     
     return DHCPv6Packet(message_type, transaction_id, options)
 
-def extract_dhcp_client_details(dhcp_packet, cur_client):
+def extract_dhcp_client_details(dhcp_packet: DHCPPacket, cur_client: Client) -> None:
+    """
+    Function to attempt to extract hostname and vendor info
+    from dhcp options
+    """
     hostname = get_dhcp_option(dhcp_packet, DHCP_HNAME_OPT)
     hostname_decoded = is_utf8_decodable(hostname)
     if hostname_decoded:
@@ -116,16 +119,24 @@ def extract_dhcp_client_details(dhcp_packet, cur_client):
         client_id_cleaned = clean_name(client_id_decoded)
         cur_client.hostnames.add(client_id_cleaned)
     
-def get_dhcp_option(dhcp_packet, option_code):
-    """Retrieve a DHCP option value by its code from a DHCPPacket."""
+def get_dhcp_option(dhcp_packet: DHCPPacket, option_code: int) -> bytes | None:
+    """
+    Retrieve a DHCP option value by its code from a DHCPPacket.
+    """
     for code, data in dhcp_packet.options:
         if code == option_code:
             return data
+
     return None  # Return None if the option is not found
 
-def parse_dhcp_packet(data):
+def parse_dhcp_packet(data: bytes) -> DHCPPacket | None:
+    """
+    Function to parse a DHCP packet.
+    """
     reader = BytesIO(data)
     header = reader.read(240)
+    if len(header) < 240:
+        return None
     message_type, hardware_type, hardware_address_length, \
         hops = struct.unpack('!BBBB', header[:4])
     tx_id = header[4:8]
