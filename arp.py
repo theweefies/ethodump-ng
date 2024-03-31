@@ -4,6 +4,7 @@
 import struct
 from dataclasses import dataclass
 from globals import bytes_to_ip, bytes_to_mac, Client
+from io import BytesIO
 
 ARP_REQUEST = 1
 ARP_REPLY = 2
@@ -20,8 +21,10 @@ class ARP:
     target_mac: str
     target_ip: str
 
-def parse_arp(reader):
-    
+def parse_arp(reader: BytesIO) -> ARP | None:
+    """
+    ARP Parsing Function
+    """    
     data = reader.read(28)
     if len(data) < 28:
         return None

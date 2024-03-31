@@ -13,18 +13,6 @@ SACK_PERMITTED = 4
 TIMESTAMP = 8
 
 @dataclass
-class ARP:
-    hardware_type: int
-    protocol: bytes
-    hardware_size: int
-    protocol_size: int
-    opcode: int
-    sender_mac: str
-    sender_ip: str
-    target_mac: str
-    target_ip: str
-
-@dataclass
 class ETHHeader:
     dst_mac: str
     src_mac: str
@@ -130,26 +118,6 @@ def tcp_ip_fingerprint(ip_header: IPHeader, tcp_header: TCPHeader) -> None:
     rst = (flags & 0x0004) >> 2
     syn = (flags & 0x0002) >> 1
     fin = flags & 0x0001
-
-def parse_arp(reader: BytesIO) -> ARP | None:
-    """
-    ARP Parsing Function
-    """
-    data = reader.read(28)
-    if len(data) < 28:
-        return None
-    hardware_type = struct.unpack('!H', data[:2])[0]
-    protocol = data[2:4]
-    hardware_size = data[4]
-    protocol_size = data[5]
-    opcode = struct.unpack('!H', data[6:8])[0]
-    sender_mac = bytes_to_mac(data[8:14])
-    sender_ip = bytes_to_ip(data[14:18])
-    target_mac = bytes_to_mac(data[18:24])
-    target_ip = bytes_to_ip(data[24:28])
-
-    return ARP(hardware_type, protocol, hardware_size, protocol_size, \
-               opcode, sender_mac, sender_ip, target_mac, target_ip)
 
 def parse_eth_header(reader: BytesIO) -> ETHHeader | None:
     """
