@@ -8508,6 +8508,6 @@ dhcp_fingerprints = {
     8133: ('Samsung Galaxy A01 Android 10', '1,3,6,15,26,28,51,58,59,43'),
     8134: ('Samsung Galaxy A03s SM-A037U Android 13', '1,3,6,15,26,28,51,58,59,43,114,108'),
     8135: ('Samsung Galaxy A12 SM-A125U Android 12', '1,3,6,15,26,28,51,58,59,43,114,108'),
-    8136: ('Pixel 5a Kernel 4.19-282 Android 14','12,50,53,55,57,60,61'),
+    8136: ('Pixel 5a K4.19-282 Android 14','12,50,53,55,57,60,61'),
     8137: ('Apple iPhone 12-Pro-Max','1,21,3,6,15,108,114,119,252')
 }
