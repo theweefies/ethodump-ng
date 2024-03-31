@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import socket
+import re
 
 ETH_P = b'\x08\x00'
 ETH_IPV6 = b'\x86\xDD'
@@ -43,6 +44,17 @@ def get_manufacturer(self):
         else:
             self.manufacturer = 'Unknown'
 
+
+def clean_name(name):
+    # Remove leading and trailing whitespace
+    cleaned = name.strip()
+
+    # Use a regular expression to remove non-printable characters
+    # This regex keeps only printable ASCII characters (space to ~)
+    cleaned = re.sub(r'[^\x20-\x7E]', '', cleaned)
+
+    return cleaned
+
 class Client:
     def __init__(self, src_mac, client_ct):
             self.client_count = client_ct
@@ -60,13 +72,15 @@ class Client:
             self.ports = set()
             self.communicants = {}
             self.connections = set()
+            self.resource_urls = set()
+            self.protocols = set()
             self.count = 0
             get_manufacturer(self)
 
     def __str__(self):
         # Create a list of formatted strings for each attribute
         attributes = [
-            f"Client Count: {self.client_count}",
+            "\n" + f"Client Count: {self.client_count}",
             f"Source MAC: {self.src_mac}",
             f"IP Address: {self.ip_address}",
             f"IPv6 Address: {self.ipv6_address}",
@@ -81,6 +95,8 @@ class Client:
             f"Ports: {', '.join(map(str, self.ports))}",
             f"Communicants: {', '.join(f'{k}: {v}' for k, v in self.communicants.items())}",
             f"Connections: {', '.join(self.connections)}",
+            f"Resource URLs: \r\n" + '\r\n'.join(self.resource_urls),
+            f"Protocols: {', '.join(self.protocols)}",
             f"Count: {self.count}"
         ]
         # Join all the attribute strings with newlines for pretty printing

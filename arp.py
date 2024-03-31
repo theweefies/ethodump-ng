@@ -38,7 +38,7 @@ def parse_arp(reader):
     return ARP(hardware_type, protocol, hardware_size, protocol_size, \
                opcode, sender_mac, sender_ip, target_mac, target_ip)
 
-def process_arp(arp_packet, clients):
+def process_arp(arp_packet, clients, flags):
     # Check if the sender is in the clients dictionary
     sender = clients.get(arp_packet.sender_mac)
 
@@ -54,5 +54,6 @@ def process_arp(arp_packet, clients):
     if arp_packet.opcode == ARP_REQUEST and arp_packet.target_mac != '00:00:00:00:00:00':
         target = clients.get(arp_packet.target_mac)
         if not target:
-            target = Client(arp_packet.target_mac)  # Target IP might not be known from ARP request
+            target = Client(arp_packet.target_mac, flags.client_count)  # Target IP might not be known from ARP request
             clients[arp_packet.target_mac] = target
+            flags.client_count += 1

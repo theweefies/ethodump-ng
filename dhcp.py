@@ -8,7 +8,7 @@ from io import BytesIO
 import struct
 import socket
 
-from globals import bytes_to_mac
+from globals import bytes_to_mac, clean_name
 
 DHCP_HNAME_OPT      = 12
 DHCP_VCLASS_OPT     = 60
@@ -85,7 +85,8 @@ def extract_dhcp_client_details(dhcp_packet, cur_client):
     hostname = get_dhcp_option(dhcp_packet, DHCP_HNAME_OPT)
     hostname_decoded = is_utf8_decodable(hostname)
     if hostname_decoded:
-        cur_client.hostnames.add(hostname_decoded)
+        hostname_cleaned = clean_name(hostname_decoded)
+        cur_client.hostnames.add(hostname_cleaned)
     vendor_class = get_dhcp_option(dhcp_packet, DHCP_VCLASS_OPT)
     if is_utf8_decodable(vendor_class) and not cur_client.vendor_class:
         cur_client.vendor_class = is_utf8_decodable(vendor_class)
@@ -93,7 +94,8 @@ def extract_dhcp_client_details(dhcp_packet, cur_client):
     client_id = get_dhcp_option(dhcp_packet, DHCP_CLIENTID_OPT)
     client_id_decoded = is_utf8_decodable(client_id)
     if client_id_decoded:
-        cur_client.hostnames.add(client_id_decoded)
+        client_id_cleaned = clean_name(client_id_decoded)
+        cur_client.hostnames.add(client_id_cleaned)
     
 def get_dhcp_option(dhcp_packet, option_code):
     """Retrieve a DHCP option value by its code from a DHCPPacket."""

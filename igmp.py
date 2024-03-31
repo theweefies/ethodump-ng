@@ -33,6 +33,9 @@ class IGMPReport:
     group_records: List[IGMPReportRecord] = field(default_factory=list)
 
 def parse_igmp(payload: bytes):
+    if len(payload) < 8:
+        return None
+    
     type_ = payload[0]
 
     if type_ in (0x11, ):  # IGMP Membership Query
@@ -47,6 +50,15 @@ def parse_igmp(payload: bytes):
             srsp_qrv = 0
             qqic = 0
             num_src = 0
+        return IGMPQuery(type_, max_response_time, checksum, multicast_address, srsp_qrv, qqic, num_src)
+
+    elif type_ in (0x16, ):  # IGMPv2 Membership Report
+        max_response_time = payload[1] // 10
+        checksum = payload[2:4]
+        multicast_address = socket.inet_ntoa(payload[4:8])
+        srsp_qrv = 0
+        qqic = 0
+        num_src = 0
         return IGMPQuery(type_, max_response_time, checksum, multicast_address, srsp_qrv, qqic, num_src)
 
     elif type_ in (0x22, ):  # IGMPv3 Membership Report

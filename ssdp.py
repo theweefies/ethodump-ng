@@ -12,7 +12,7 @@ class SSDPNotify:
     location: str
     server: str
 
-def parse_ssdp_packet(payload: bytes):
+def parse_ssdp_packet(payload: bytes, cur_client):
     type_ = None
     location = None
     server = None
@@ -23,10 +23,14 @@ def parse_ssdp_packet(payload: bytes):
         for line in lines:
             if 'LOCATION' in line:
                 location = line.split(': ')[1].strip().replace('\r\n','')
+                if location:
+                    cur_client.resource_urls.add(location)
             if 'SERVER' in line:
                 os_regex = r"([A-Za-z]+\/[\d\.]+)"
                 matches = re.findall(os_regex, line)
                 server = matches[0] if matches else None
+                if server:
+                    cur_client.oses.add(server)
 
         return SSDPNotify(type_, location, server)
     else:

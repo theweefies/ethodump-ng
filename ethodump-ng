@@ -137,7 +137,7 @@ def display_devices(clients_dict, status_info):
 
     # Define maximum widths for each column
     max_widths = {
-        '#': 3, 'SOURCE': 19, 'IPv4': 14, 'IPv6': 35, 'MANUFACTURER': 25,
+        '#': 3, 'SOURCE': 19, 'IPv4': 14, 'IPv6': 30, 'MANUFACTURER': 20,
         'HOSTNAME': 20, 'SERVICES': 20, 'TTL': 4, 'OS': 15, 'CONNECTIONS': 15, 'PORTS': 6, 'COUNTS': 6
     }
 
@@ -187,7 +187,7 @@ def display_devices(clients_dict, status_info):
                 # Format and print the row
                 formatted_row = header_format.format(*truncated_dict.values())
                 sys.stdout.write(' ' + formatted_row + '\n')
-                
+                sys.stdout.flush()
                 if flags.key_code and client_dict["#"] == flags.key_code:
                     if not status_info.message_printed:
                         status_info.status_message += f"][ + Device {flags.key_code} expanded"
@@ -202,8 +202,8 @@ def display_devices(clients_dict, status_info):
                         # Format and print the additional row
                         formatted_additional_row = header_format.format(*additional_row.values())
                         sys.stdout.write(' ' + formatted_additional_row + '\n')
-
-            #sys.stdout.flush()
+                        sys.stdout.flush()
+            sys.stdout.flush()
             time.sleep(1)  # Update every second
         else:
             pass
@@ -253,7 +253,6 @@ def is_self_L2_L3(packet_mac, iface, packet_ip):
 def is_private_ipv4(ip_str):
     try:
         ip = ipaddress.ip_address(ip_str)
-        # Check if the IP address is private (10.x.x.x, 172.16.x.x - 172.31.x.x, 192.168.x.x)
         if ip.is_private:
             return True
         # If the IP address is not private or reserved, it's considered public
@@ -297,11 +296,13 @@ def parse_packet(p, own_iface):
         else:
             cur_client = clients.get(eth_header.src_mac)
 
+        # increase packet count for this client
         cur_client.count += 1
 
         if eth_header.eth_type == ARP_P:
             arp_packet = parse_arp(reader)
-            process_arp(arp_packet, clients)
+            process_arp(arp_packet, clients, flags)
+            cur_client.protocols.add('ARP')
             return
 
         elif eth_header.eth_type == ETH_P:
@@ -317,26 +318,37 @@ def parse_packet(p, own_iface):
                 add_port(udp_header.src_port, cur_client)
 
                 if udp_header.src_port == 53: # DNS
-                    # dns_packet = parse_dns_packet(payload)
+                    dns_packet = parse_dns_packet(payload)
+                    #print(dns_packet)
+                    cur_client.protocols.add('DNS')
                     return
                 
                 elif udp_header.src_port == 68:
                     dhcp_packet = parse_dhcp_packet(payload)
                     extract_dhcp_client_details(dhcp_packet, cur_client)
+                    cur_client.protocols.add('DHCP')
                     return
 
                 elif udp_header.src_port == 137 or udp_header.dst_port == 137:
                     nbns_packet = parse_netbios_packet(payload, cur_client)
-                    # print(nbns_packet)
+                    cur_client.protocols.add('NETBIOS-UDP-137')
+                    return
+                
+                elif udp_header.src_port == 138 or udp_header.dst_port == 138:
+                    # print('NETBIOS on port 138')
+                    cur_client.protocols.add('NETBIOS-UDP-138')
                     return
 
                 elif udp_header.dst_port == 1900:
-                    ssdp_packet = parse_ssdp_packet(payload)
+                    ssdp_packet = parse_ssdp_packet(payload, cur_client)
+                    cur_client.protocols.add('SSDP')
+                    #print(ssdp_packet)
                     return
                     
                 elif udp_header.dst_port == 5353: # MDNS
                     mdns_packet = parse_dns_packet(payload)
                     process_dns_packet(mdns_packet, cur_client)
+                    cur_client.protocols.add('MDNS')
                     return
 
             elif ip_header.protocol == 6: # TCP
@@ -348,25 +360,38 @@ def parse_packet(p, own_iface):
 
                 if tcp_header.dst_port == 80: # HTTP
                     find_ua(payload, cur_client)
+                    cur_client.protocols.add('HTTP')
                     return
                 
                 if tcp_header.dst_port == 443: # HTTPS
+                    cur_client.protocols.add('HTTPS')
                     return
                 
+                if tcp_header.src_port == 445 or tcp_header.dst_port == 445: # SMB
+                    cur_client.protocols.add('SMB')
+                    return
+
                 if tcp_header.src_port == 139:
                     nbns_packet = parse_netbios_packet(payload, cur_client)
+                    #print(nbns_packet)
+                    cur_client.protocols.add('NETBIOS-TCP-139')
                     return
                 
             elif ip_header.protocol == 2: # IGMP
                 igmp_payload_length = ip_header.total_length - ip_header.header_length
                 payload = reader.read(igmp_payload_length)
                 igmp_packet = parse_igmp(payload)
+                #print(igmp_packet)
+                cur_client.protocols.add('IGMP')
                 return
             
             elif ip_header.protocol == 1: # ICMP
+                cur_client.ttl = ip_header.ttl
                 icmp_payload_length = ip_header.total_length - ip_header.header_length
                 payload = reader.read(icmp_payload_length)
                 icmp_packet = parse_icmp(payload)
+                #print(icmp_packet)
+                cur_client.protocols.add('ICMP')
                 return
             
         elif eth_header.eth_type == ETH_IPV6:
@@ -382,31 +407,40 @@ def parse_packet(p, own_iface):
                 if udp_header.src_port == 5353: # MDNS
                     mdns_packet = parse_dns_packet(payload)
                     process_dns_packet(mdns_packet, cur_client)
+                    cur_client.protocols.add('MDNSv6')
                     return
                 
                 if udp_header.src_port == 546:
                     dhcpv6_packet = parse_dhcpv6_packet(payload)
+                    cur_client.protocols.add('DHCPv6')
                     return
                 
             elif ipv6_header.next_header == 0: #ICMPv6
                 icmpv6_packet = parse_icmpv6(reader)
+                cur_client.protocols.add('ICMPv6')
                 return
             
-# Consumer function to process packets
-def packet_consumer(iface, filename):
-    # global exit_flag
+# parser function to process packets
+def packet_parser(iface):
     while not flags.exit_flag:
         try:
             pkt = packet_queue.get(timeout=1)  # Timeout ensures that the loop checks the flag periodically
             parse_packet(pkt, iface)
-            if filename:
-                write_packet(pkt, filename)
             packet_queue.task_done()
         except queue.Empty:
             continue  # Continue checking the flag if the queue is empty
 
-# Producer function to read packets
-def packet_producer(iface):
+def packet_writer(filename):
+    while not flags.exit_flag:
+        try:
+            pkt = write_queue.get(timeout=1)
+            write_packet(pkt, filename)
+            write_queue.task_done()
+        except queue.Empty:
+            continue
+
+# listener function to read packets
+def packet_listener(iface, filename):
     # global exit_flag
     s = None
     try:
@@ -417,13 +451,17 @@ def packet_producer(iface):
         while not flags.exit_flag:
             pkt, addr = s.recvfrom(8192)
             packet_queue.put(pkt)
+            if filename:
+                write_queue.put(pkt)
     
     except KeyboardInterrupt:
         flags.exit_flag = True  # Signal all threads to exit
         print('\nExiting...')
     except PermissionError:
+        flags.exit_flag = True
         print('Permission Error: This script must be run with sudo.')
     except OSError:
+        flags.exit_flag = True
         print(f'Error: Issue opening the socket on {iface.interface_name}.')
     finally:
         if s:
@@ -457,6 +495,7 @@ if __name__ == "__main__":
     ed_argparse.version = '1.0'
     ed_argparse.add_argument('-i', '--interface', action='store', type=str, help='Enter the interface on which you want to sniff.', required=True)
     ed_argparse.add_argument('-w', '--write', action='store', type=str, help='Pass the file name to write packets.', required=False)
+    ed_argparse.add_argument('-s', '--save', action='store', type=str, help='Pass the file name to save detailed results.', required=False)
     ed_argparse.add_argument('-d', '--debug', action='store_true', help='Set the script debug to verbose.', required=False, default=False)
     ed_argparse.add_argument('-v', '--version', action='version')
 
@@ -478,17 +517,21 @@ if __name__ == "__main__":
 
     if args.write:
         write_header(args.write)
+        write_queue = queue.Queue(QUEUE_SIZE)
+        write_thread = threading.Thread(target=packet_writer, args=(args.write,))
+        write_thread.daemon = True
+        write_thread.start()
 
-    # Start consumer threads
+    # Start parser threads
     for _ in range(num_workers):
-        worker_thread = threading.Thread(target=packet_consumer, args=(iface, args.write,))
+        worker_thread = threading.Thread(target=packet_parser, args=(iface,))
         worker_thread.daemon = True  # Daemon threads exit when the main program does
         worker_thread.start()
 
-    # Start the producer thread
-    producer_thread = threading.Thread(target=packet_producer, args=(iface,))
-    producer_thread.daemon = True
-    producer_thread.start()
+    # Start the listener thread
+    listener_thread = threading.Thread(target=packet_listener, args=(iface,args.write,))
+    listener_thread.daemon = True
+    listener_thread.start()
 
     if not args.debug:
         # Start the display thread
@@ -497,9 +540,9 @@ if __name__ == "__main__":
         display_thread.start()
 
     # Start the key press listener thread
-    listener_thread = threading.Thread(target=key_press_listener, args=(handle_key_press,))
-    listener_thread.daemon = True  # Daemon threads will be killed when the main thread exits
-    listener_thread.start()
+    keypress_thread = threading.Thread(target=key_press_listener, args=(handle_key_press,))
+    keypress_thread.daemon = True  # Daemon threads will be killed when the main thread exits
+    keypress_thread.start()
 
     try:
         # Wait for threads to exit gracefully
@@ -511,6 +554,12 @@ if __name__ == "__main__":
         flags.exit_flag = True  # Signal all threads to exit
         print("\nSignal received, shutting down...")
 
-    for client in clients:
-        print(clients[client])
+    if args.debug:
+        for client in clients:
+            print(clients[client])
 
+    if args.save:
+        f_save = open(args.save, 'w')
+        for client in clients:
+            f_save.write(str(clients[client]) + '\n')
+        f_save.close()

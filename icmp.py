@@ -2,7 +2,7 @@
 
 import struct
 import socket
-
+from io import BytesIO
 from typing import List
 from dataclasses import dataclass, field
 
@@ -31,12 +31,13 @@ class ICMPv6:
     num_multicast_address_records: int
     multicast_address_records: List[MulticastAddressRecord] = field(default_factory=list)
 
-def parse_icmp(reader) -> ICMP:
-    icmp_header = reader.read(10)
-    if len(icmp_header) < 10:
+def parse_icmp(data) -> ICMP:
+    reader = BytesIO(data)
+    icmp_header = reader.read(12)
+    if len(icmp_header) < 12:
         return None
-    type_, code, checksum, id, seq, timestamp = struct.unpack('!BBHHI', icmp_header)
-    
+    type_, code, checksum, id, seq, timestamp = struct.unpack('!BBHHHI', icmp_header)
+
     return ICMP(type_, code, checksum, id, seq, timestamp)
 
 def parse_icmpv6(reader) -> ICMPv6:
