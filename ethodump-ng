@@ -440,7 +440,7 @@ def parse_packet(p: bytes, own_iface: interface):
         elif eth_header.eth_type == ETH_IPV6:
             
             ipv6_header = parse_ipv6_header(reader)
-            if not cur_client.ipv6_address:
+            if not cur_client.ipv6_address and ipv6_header.src_ipv6 != '::':
                 cur_client.ipv6_address = ipv6_header.src_ipv6
 
             if ipv6_header.next_header == 17: # UDP

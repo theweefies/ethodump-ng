@@ -11,6 +11,7 @@ import struct
 import re
 
 from globals import clean_name, Client
+from models import samsung_models, apple_models, hp_models, blackberry_models, roku_models
 
 DNS_PTR = 12
 DNS_TXT = 16
@@ -158,11 +159,24 @@ def extract_service_name(name: bytes) -> str:
         return service_match.group(1)  # Service name without the leading '_'
     return ""
 
+def model_check(model: str) -> None | str:
+    """
+    Function to search for model identifiers in manufacture databases.
+    """
+    model_databases = [apple_models, hp_models, roku_models, samsung_models]
+
+    for database in model_databases:
+        result = database.get(model)
+        if result:
+            return result  # Return as soon as a match is found
+
+    return None  # Return None if no match is found in any database
+
 def parse_txt(record: DNSTXT, cur_client: Client) -> None:
     """
     Function to parse text fields and update the Client class
     """
-    device_model_tags = [b"fv", b"model", b"manufacturer", b"serialNumber"]
+    device_model_tags = [b"fv", b"model", b"manufacturer", b"serialNumber", b"product"]
     connected_device_tags = [b"title", b"type", b"tech"]
 
     for entry in record.txt_data:
@@ -170,7 +184,16 @@ def parse_txt(record: DNSTXT, cur_client: Client) -> None:
         if k in connected_device_tags:
             cur_client.connections.add(v.decode('utf-8','ignore'))
         elif k in device_model_tags:
-            cur_client.oses.add(v.decode('utf-8', 'ignore'))
+            decoded_value = v.decode('utf-8', 'ignore')
+            if k == b"model" and not cur_client.model_check_complete:
+                resolved_model = model_check(decoded_value)
+                cur_client.model_check_complete = True
+                if resolved_model:
+                    cur_client.oses.add(resolved_model)
+                else:
+                    cur_client.oses.add(decoded_value)
+            elif k != b"model":
+                cur_client.oses.add(decoded_value)
         # print('Key: ', k.decode('utf-8','ignore'))
         # print('Value: ', v.decode('utf-8','ignore'))
 
