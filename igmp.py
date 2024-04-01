@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-
+"""
+IGMP Module for ethodump-ng
+"""
 import struct
 import socket
 
@@ -32,7 +34,10 @@ class IGMPReport:
     num_group_records: int
     group_records: List[IGMPReportRecord] = field(default_factory=list)
 
-def parse_igmp(payload: bytes):
+def parse_igmp(payload: bytes) -> None | IGMPQuery | IGMPReport:
+    """
+    Function to parse IGMP packets.
+    """
     if len(payload) < 8:
         return None
     
@@ -77,4 +82,3 @@ def parse_igmp(payload: bytes):
 
     else:
         return None
-

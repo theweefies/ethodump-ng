@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 """
+Main module for ethodump-ng.
+
 DNS From:  https://implement-dns.wizardzines.com/book/part_1
 """
 
@@ -36,12 +38,15 @@ from globals import PCAP_GLOBAL_HEADER_ETHERNET, QUEUE_SIZE
 from globals import Flags
 
 class interface:
+    """
+    Class to store and initialize system interface attributes.
+    """
     interface_name = None
     mac = None
     ip = None
     gateway = None
 
-    def __init__(self, name):
+    def __init__(self, name: str):
         self.interface_name = name
         self.get_own_addresses()
         try:
@@ -52,24 +57,29 @@ class interface:
             pass
 
     def get_own_addresses(self):
+        """
+        Method to retrieve layer 2 and 3 addressing from specified interface.
+        """
         self.mac = netifaces.ifaddresses(self.interface_name)[netifaces.AF_LINK][0]['addr']
         self.ip = netifaces.ifaddresses(self.interface_name)[netifaces.AF_INET][0]['addr']
 
 
 class StatusInfo:
+    """
+    Function to store status information related to the
+    Real-Time Display.
+    """
     def __init__(self, interface):
         self.interface = interface
         self.start_time = time.time()
         self.status_message = ""
         self.message_printed = False
 
-def debug_to_log(payload):
-    f_open = open('debug.log', 'ab')
-    f_open.write(payload)
-    f_open.close()
-
-def key_press_listener(action):
-
+def key_press_listener(action) -> None:
+    """
+    Function to listen for key presses. Target of the key
+    listener thread.
+    """
     old_settings = termios.tcgetattr(sys.stdin)
     try:
         tty.setcbreak(sys.stdin.fileno())
@@ -82,8 +92,11 @@ def key_press_listener(action):
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
-def handle_key_press(key):
-
+def handle_key_press(key: str) -> None:
+    """
+    Function to commit control actions after detecting specific
+    key presses.
+    """
     if key == '\x1b':  # ESC key
         print("ESC key pressed, exiting...")
         flags.exit_flag = True
@@ -125,8 +138,11 @@ def handle_key_press(key):
     else:
         flags.q_pressed = True
 
-def display_devices(clients_, status_info):
-    
+def display_devices(clients_:dict, status_info: StatusInfo) -> None:
+    """
+    Function to print out details of the client class instances to the
+    Real-Time Display. Target of thread.
+    """
     # Define maximum widths for each column
     max_widths = {
         '#': 3, 'SOURCE': 19, 'IPv4': 14, 'IPv6': 30, 'MANUFACTURER': 20,
@@ -203,8 +219,10 @@ def display_devices(clients_, status_info):
         else:
             pass
 
-def is_multicast_or_broadcast(mac_address):
-    """Check if the MAC address is multicast or broadcast."""
+def is_multicast_or_broadcast(mac_address: str) -> bool:
+    """
+    Check if the MAC address is multicast or broadcast.
+    """
     if mac_address == 'ff:ff:ff:ff:ff:ff':
         return True  # Broadcast address
     # Split the MAC address string into octets and take the first one
@@ -214,7 +232,10 @@ def is_multicast_or_broadcast(mac_address):
     # Multicast address check (LSB of first octet is 1)
     return (first_octet_int & 0x01) == 0x01
 
-def extract_os_from_user_agent(user_agent):
+def extract_os_from_user_agent(user_agent: str) -> str:
+    """
+    Extract os details from the user agent.
+    """
     # If no OS match, try to return the portion inside the first set of parentheses
     parenthetical_match = re.search(r'\(([^)]+)\)', user_agent)
     if parenthetical_match:
@@ -222,7 +243,11 @@ def extract_os_from_user_agent(user_agent):
     
     return ""
 
-def load_oui():
+def load_oui() -> None:
+    """
+    Function to load an oui dictionary from an oui
+    file. 
+    """
     print('[+] Loading OUI tables')
     try:
         f_oui = open(oui_file, 'r')
@@ -232,35 +257,53 @@ def load_oui():
     except FileNotFoundError:
         print(f'[!] File Not Found: {oui_file}')
 
-def is_self_L2(packet_mac, iface_mac):
+def is_self_L2(packet_mac: str, iface_mac: str) -> bool:
+    """
+    Function to compare the source mac of a packet with the
+    current system interface mac. Used to ignore packet coming
+    from the system interface.
+    """
     if packet_mac == iface_mac:
         return True
     else:
         return False
     
-def is_self_L2_L3(packet_mac, iface, packet_ip):
-
+def is_self_L2_L3(packet_mac: str, iface: interface, packet_ip: str) -> bool:
+    """
+    Function to compare the source mac of a packet with the
+    current system interface mac (and for layer 3 as well). 
+    Used to ignore packet coming from the system interface.
+    """
     if packet_mac == iface.mac and packet_ip == iface.ip:
         return True
     else:
         return False
 
-def is_private_ipv4(ip_str):
+def is_private_ipv4(ip_str: str) -> bool:
+    """
+    Function to test if an ip address is private.
+    """
     try:
         ip = ipaddress.ip_address(ip_str)
         if ip.is_private:
             return True
-        # If the IP address is not private or reserved, it's considered public
         return False
     except ValueError:
-        # The input is not a valid IP address
         return False
     
-def add_port(src_port, cur_client):
+def add_port(src_port: int, cur_client: Client) -> None:
+    """
+    Function to add a port number to the client class instance.
+    """
     if src_port < 5500:
         cur_client.ports.add(src_port)
 
-def find_ua(payload, cur_client):
+def find_ua(payload: bytes, cur_client: Client) -> None:
+    """
+    Function to find a User-Agent from an http payload. Call
+    to extract_os_from_user_agent attempt to extract system/
+    build/os version and add to client class instance.
+    """
     os_string = ""
     user_agent = ""
 
@@ -277,7 +320,11 @@ def find_ua(payload, cur_client):
     if os_string:
         cur_client.oses.add(os_string)
 
-def parse_packet(p, own_iface):
+def parse_packet(p: bytes, own_iface: interface):
+    """
+    Main packet parsing function. Processes Layer 2&^ headers by addressing
+    protocols, and ports. 
+    """
 
     reader = BytesIO(p)
     eth_header = parse_eth_header(reader)
@@ -416,8 +463,11 @@ def parse_packet(p, own_iface):
                 cur_client.protocols.add('ICMPv6')
                 return
             
-# parser function to process packets
-def packet_parser(iface):
+def packet_parser(iface: interface) -> None:
+    """
+    One of main threads. Function pulls packets from the queue
+    for parsing. 
+    """
     while not flags.exit_flag:
         try:
             pkt = packet_queue.get(timeout=1)  # Timeout ensures that the loop checks the flag periodically
@@ -426,7 +476,11 @@ def packet_parser(iface):
         except queue.Empty:
             continue  # Continue checking the flag if the queue is empty
 
-def packet_writer(filename):
+def packet_writer(filename: str | None) -> None:
+    """
+    One of main threads. Function pulls packets from dedicated queue
+    for writing to file.
+    """
     while not flags.exit_flag:
         try:
             pkt = write_queue.get(timeout=1)
@@ -435,9 +489,11 @@ def packet_writer(filename):
         except queue.Empty:
             continue
 
-# listener function to read packets
-def packet_listener(iface, filename):
-    # global exit_flag
+def packet_listener(iface: interface, filename: str | None):
+    """
+    One of main theads. Function reads raw packets from a socket,
+    then writing them to a parsing and writing queue. 
+    """
     s = None
     try:
         s = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_ALL))
@@ -463,8 +519,10 @@ def packet_listener(iface, filename):
         if s:
             s.close()
 
-def write_packet(p, filename):
-
+def write_packet(p: bytes, filename: str | None) -> None:
+    """
+    Function to write packets to a pcap file.
+    """
     # Get the current time
     current_time = time.time()
 
@@ -479,7 +537,10 @@ def write_packet(p, filename):
     f_out.write(p)
     f_out.close()
 
-def write_header(filename):
+def write_header(filename: str) -> None:
+    """
+    Function to write the global pcap file header.
+    """
     f_out = open(filename, "wb")
 
     f_out.write(PCAP_GLOBAL_HEADER_ETHERNET)
@@ -499,16 +560,19 @@ if __name__ == "__main__":
 
     load_oui()
 
+    # Initialize global interface object class
     iface = interface(args.interface)
 
+    # Initialize global display status info and input control class
     status_info = StatusInfo(args.interface)
 
+    # Initialize global flags class for signal management
     flags = Flags()
 
     # Initialize the queue
     packet_queue = queue.Queue(QUEUE_SIZE)
 
-     # Number of consumer threads
+    # Number of consumer threads
     num_workers = 4
 
     if args.write:

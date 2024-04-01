@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 import re
 
+from globals import Client
+
 NOTIFY = 'NOTIFY'
 SEARCH = 'M-SEARCH'
 
@@ -12,7 +14,11 @@ class SSDPNotify:
     location: str
     server: str
 
-def parse_ssdp_packet(payload: bytes, cur_client):
+def parse_ssdp_packet(payload: bytes, cur_client: Client) -> None | SSDPNotify:
+    """
+    Function to parse SSDP Notify messages and extract resource
+    urls and perform os detection.
+    """
     type_ = None
     location = None
     server = None

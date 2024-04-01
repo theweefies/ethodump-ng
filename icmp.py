@@ -31,7 +31,10 @@ class ICMPv6:
     num_multicast_address_records: int
     multicast_address_records: List[MulticastAddressRecord] = field(default_factory=list)
 
-def parse_icmp(data) -> ICMP:
+def parse_icmp(data: bytes) -> ICMP | None:
+    """
+    Function to parse ICMP packets.
+    """
     reader = BytesIO(data)
     icmp_header = reader.read(12)
     if len(icmp_header) < 12:
@@ -40,7 +43,10 @@ def parse_icmp(data) -> ICMP:
 
     return ICMP(type_, code, checksum, id, seq, timestamp)
 
-def parse_icmpv6(reader) -> ICMPv6:
+def parse_icmpv6(reader: BytesIO) -> ICMPv6 | None:
+    """
+    Function to parse ICMPv6 packets.
+    """
     # Read the ICMPv6 header fields
     icmpv6_header = reader.read(8)
     if len(icmpv6_header) < 8:

@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 
+"""
+Module to handle DNS and MDNS packets for ethodump-ng.
+"""
+
 from dataclasses import dataclass
 from io import BytesIO
 import socket
 import struct
 import re
 
-from globals import clean_name
+from globals import clean_name, Client
 
 DNS_PTR = 12
 DNS_TXT = 16
@@ -126,7 +130,9 @@ class DNSPacket:
     additionals: list
 
 def extract_hostname(data: bytes) -> str:
-    """Extract hostname from the PTR record in an answer."""
+    """
+    Extract hostname from the PTR record in an answer.
+    """
     if not data:
         return ""
     try:
@@ -139,7 +145,9 @@ def extract_hostname(data: bytes) -> str:
     return hostname
 
 def extract_service_name(name: bytes) -> str:
-    """Extract service name from any name field starting with '_'."""
+    """
+    Extract service name from any name field starting with '_'.
+    """
     try:
         decoded_name = name.decode('utf-8', 'ignore')
     except UnicodeDecodeError:
@@ -150,9 +158,13 @@ def extract_service_name(name: bytes) -> str:
         return service_match.group(1)  # Service name without the leading '_'
     return ""
 
-def parse_txt(record, cur_client):
+def parse_txt(record: DNSTXT, cur_client: Client) -> None:
+    """
+    Function to parse text fields and update the Client class
+    """
     device_model_tags = [b"fv", b"model", b"manufacturer", b"serialNumber"]
     connected_device_tags = [b"title", b"type", b"tech"]
+
     for entry in record.txt_data:
         k, v = entry.split(b'=')
         if k in connected_device_tags:
@@ -162,10 +174,18 @@ def parse_txt(record, cur_client):
         # print('Key: ', k.decode('utf-8','ignore'))
         # print('Value: ', v.decode('utf-8','ignore'))
 
-def process_dns_packet(packet: DNSPacket, cur_client):
+def process_dns_packet(packet: DNSPacket, cur_client: Client) -> None:
+    """
+    Function to process the data in a DNS or mDNS packet to extract
+    relevant service, hostname, model, and device information.
+    """
     service_restricted_names = ["Spotify", "google", "localhost"]
     
-    def process_record(record, record_type):
+    def process_record(record: DNSA | DNSAAAA | DNSANY | DNSPTR | DNSNSEC | DNSSRV | DNSTXT, record_type: str) -> None | str | bytes:
+        """
+        Function to process an mDNS record of accepted types to
+        perform the task of the parent function.
+        """
         hostname = None
         if record.type_ == DNS_PTR and record_type == 'question':
             service_name = extract_service_name(record.name)
@@ -203,7 +223,10 @@ def process_dns_packet(packet: DNSPacket, cur_client):
                 sanitized_hostname = hostname_cleaned.replace('(', '').replace(')', '')
                 cur_client.hostnames.add(sanitized_hostname)
 
-def decode_name(reader):
+def decode_name(reader: BytesIO) -> bytes:
+    """
+    Function to perform name decoding.
+    """
     parts = []
     while True:
         data = reader.read(1)
@@ -219,7 +242,10 @@ def decode_name(reader):
             parts.append(reader.read(length))
     return b".".join(parts)
 
-def decode_compressed_name(length, reader):
+def decode_compressed_name(length: int, reader: BytesIO) -> bytes:
+    """
+    Function to perform DNS name decompression.
+    """
     pointer_bytes = bytes([length & 0b0011_1111]) + reader.read(1)
     pointer = struct.unpack("!H", pointer_bytes)[0]
     current_pos = reader.tell()
@@ -228,13 +254,18 @@ def decode_compressed_name(length, reader):
     reader.seek(current_pos)
     return result
 
-def parse_header(reader):
+def parse_header(reader: BytesIO) -> DNSHeader:
+    """
+    Function to parse a DNS packet header.
+    """
     items = struct.unpack("!HHHHHH", reader.read(12))
     # see "a note on BytesIO" for an explanation of `reader` here
     return DNSHeader(*items)
 
-def parse_record(reader, record_type=None):
-    """Parse M/DNS Record Types."""
+def parse_record(reader: BytesIO, record_type: str=None) -> None | DNSPTR | DNSANY | DNSA | DNSAAAA | DNSTXT | DNSSRV | DNSNSEC | DNSOPT:
+    """
+    Parse M/DNS Record Types.
+    """
     name = decode_name(reader)
     data = reader.read(4)
     if len(data) < 4:
@@ -363,11 +394,16 @@ def parse_record(reader, record_type=None):
     else:
         return None
 
-def parse_authority(reader):
+def parse_authority(reader: BytesIO) -> DNSAuthoratativeNameservers | None:
+    """
+    Parses a dns authoratative nameserver record.
+    """
     name = decode_name(reader)
     if not name:
         name = b'<Root>'
     data = reader.read(10)
+    if len(data) < 10:
+        return None
     type_, class_, ttl, data_len = struct.unpack("!HHIH", data)
     primary_nameserver = decode_name(reader)
     if not primary_nameserver:
@@ -379,7 +415,10 @@ def parse_authority(reader):
     return DNSAuthoratativeNameservers(name, type_, class_, ttl, data_len, primary_nameserver, \
                         responsible_authority, serial_number, refresh_interval, retry_interval, expire_limit, min_ttl)
 
-def parse_dns_packet(data):
+def parse_dns_packet(data: bytes) -> DNSPacket:
+    """
+    Parse a dns packet and build a DNS dataclass stucture.
+    """
     reader = BytesIO(data)
     header = parse_header(reader)
 
