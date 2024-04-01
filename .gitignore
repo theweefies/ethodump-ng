@@ -1,4 +1,4 @@
 c-array-2-python.py
-*.pcap
+caps-dev/*.pcap
 __pycache__/
 
