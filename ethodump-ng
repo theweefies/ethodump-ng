@@ -32,10 +32,12 @@ from igmp import parse_igmp
 from icmp import parse_icmp, parse_icmpv6
 from netbios import parse_netbios_packet
 from ssdp import parse_ssdp_packet
+from tls import parse_tls_payload, find_ja3_classification
 from globals import Client, oui_table, oui_file, clients
 from globals import ETH_P, ARP_P, ETH_P_ALL, ETH_IPV6
 from globals import PCAP_GLOBAL_HEADER_ETHERNET, QUEUE_SIZE
 from globals import Flags
+from globals import DARK_RED, DEFAULT
 
 class interface:
     """
@@ -60,9 +62,12 @@ class interface:
         """
         Method to retrieve layer 2 and 3 addressing from specified interface.
         """
-        self.mac = netifaces.ifaddresses(self.interface_name)[netifaces.AF_LINK][0]['addr']
-        self.ip = netifaces.ifaddresses(self.interface_name)[netifaces.AF_INET][0]['addr']
-
+        try:
+            self.mac = netifaces.ifaddresses(self.interface_name)[netifaces.AF_LINK][0]['addr']
+            self.ip = netifaces.ifaddresses(self.interface_name)[netifaces.AF_INET][0]['addr']
+        except Exception as e:
+            print('[!] ERROR: Please check the interface name and try again.')
+            sys.exit(0)
 
 class StatusInfo:
     """
@@ -74,6 +79,21 @@ class StatusInfo:
         self.start_time = time.time()
         self.status_message = ""
         self.message_printed = False
+
+def hide_cursor() -> None:
+    """
+    Function to hide the cursor.
+    """
+    sys.stdout.write('\x1b[?25l')
+    sys.stdout.flush()
+
+def show_cursor() -> None:
+    """
+    Function to show the cursor.
+    """
+    sys.stdout.write('\x1b[?25h')
+    sys.stdout.flush()
+
 
 def key_press_listener(action) -> None:
     """
@@ -102,6 +122,7 @@ def handle_key_press(key: str) -> None:
         flags.exit_flag = True
         flags.q_pressed = True
     elif key.isdigit():
+        sys.stdout.write('\x1b[2J\x1b[H')
         if flags.key_code == int(key):
             flags.key_code = None
             flags.device_switch = False
@@ -152,7 +173,7 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
     # Define the header and row formats using the maximum widths
     header_format = " ".join([f"{{:<{max_widths[col]}}}" for col in max_widths])
     header = header_format.format(*max_widths.keys())
-    
+    sys.stdout.write('\x1b[2J\x1b[H')
     while not flags.exit_flag:
 
         clients_dict = clients_.copy()
@@ -173,7 +194,8 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
 
             status_line = f"{status_info.interface} ][ Elapsed: {elapsed_str} ][ {current_date_time} {status_info.status_message}"
 
-            sys.stdout.write('\x1b[2J\x1b[H')  # Clear screen and move cursor to top
+            sys.stdout.write('\x1b[H')  # Move cursor to top
+            # sys.stdout.write('\x1b[2J\x1b[H')  # Clear screen and move cursor to top
             sys.stdout.write(' ' + status_line + '\n\n')
             # Print the header
             sys.stdout.write(' ' + header + '\n')
@@ -196,6 +218,8 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
                         truncated_dict[k] = (str(v)[:max_widths[k]] if v is not None else '')
 
                 # Format and print the row
+                if flags.key_code and client_dict["#"] == flags.key_code:
+                    sys.stdout.write(DARK_RED)
                 formatted_row = header_format.format(*truncated_dict.values())
                 sys.stdout.write(' ' + formatted_row + '\n')
                 sys.stdout.flush()
@@ -214,6 +238,8 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
                         formatted_additional_row = header_format.format(*additional_row.values())
                         sys.stdout.write(' ' + formatted_additional_row + '\n')
                         sys.stdout.flush()
+                if flags.key_code and client_dict["#"] == flags.key_code:
+                    sys.stdout.write(DEFAULT)
             sys.stdout.flush()
             time.sleep(1)  # Update every second
         else:
@@ -401,12 +427,19 @@ def parse_packet(p: bytes, own_iface: interface):
                 payload = reader.read(tcp_header.payload_length)
                 add_port(tcp_header.src_port, cur_client)
 
+                if tcp_header.dst_port == 22 or tcp_header.src_port == 22:
+                    cur_client.protocols.add('SSH')
+                    return
+
                 if tcp_header.dst_port == 80: # HTTP
                     find_ua(payload, cur_client)
                     cur_client.protocols.add('HTTP')
                     return
                 
                 if tcp_header.dst_port == 443: # HTTPS
+                    tls_packet = parse_tls_payload(payload)
+                    if tls_packet:
+                        find_ja3_classification(tls_packet, cur_client)
                     cur_client.protocols.add('HTTPS')
                     return
                 
@@ -575,6 +608,8 @@ if __name__ == "__main__":
     # Number of consumer threads
     num_workers = 4
 
+    hide_cursor()
+
     if args.write:
         write_header(args.write)
         write_queue = queue.Queue(QUEUE_SIZE)
@@ -623,3 +658,5 @@ if __name__ == "__main__":
         for client in clients:
             f_save.write(str(clients[client]) + '\n')
         f_save.close()
+    
+    show_cursor()

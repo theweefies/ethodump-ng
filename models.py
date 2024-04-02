@@ -8534,7 +8534,8 @@ dhcp_fingerprints = {
     8134: ('Samsung Galaxy A03s SM-A037U Android 13', '1,3,6,15,26,28,51,58,59,43,114,108'),
     8135: ('Samsung Galaxy A12 SM-A125U Android 12', '1,3,6,15,26,28,51,58,59,43,114,108'),
     8136: ('Pixel 5a K4.19-282 Android 14','12,50,53,55,57,60,61'),
-    8137: ('Apple iPhone 12-Pro-Max','1,121,3,6,15,108,114,119,252')
+    8137: ('Apple iPhone 12-Pro-Max','1,121,3,6,15,108,114,119,252'),
+    8138: ('Rpi K6.1.0-rpi8-rpi-armv7l-dhcpcd','1,121,3,6,12,15,26,28,33,42,51,54,58,59,119')
 }
 ja3_tls_vals = {
     "002205d0f96c37c5e660b9f041363c11": "Google Chrome",

@@ -17,6 +17,9 @@ clients = {}
 oui_table = {}
 oui_file = "oui.csv"
 
+DARK_RED = '\x1b[31m'
+DEFAULT = '\x1b[0m'
+
 def bytes_to_mac(bytes: bytes) -> str:
     """
     Converts a bytes MAC to a colon delimited string.
@@ -108,6 +111,8 @@ class Client:
             self.protocols = set()
             self.fingerprints = {"dhcp":None, "tcp":None}
             self.model_check_complete = False
+            self.tls_ja3_classifications = set()
+            self.tls_snis = set()
             self.count = 0
             get_manufacturer(self)
 
@@ -132,9 +137,11 @@ class Client:
             f"Ports: {', '.join(map(str, self.ports))}",
             f"Communicants: {', '.join(f'{k}: {v}' for k, v in self.communicants.items())}",
             f"Connections: {', '.join(self.connections)}",
-            f"Resource URLs: \r\n" + '\r\n'.join(self.resource_urls),
+            f"Resource URLs: \n" + '\n'.join(self.resource_urls),
             f"Protocols: {', '.join(self.protocols)}",
             ', '.join([f"{protocol.upper()} Fingerprint: {fingerprint if fingerprint else 'Not Available'}" for protocol, fingerprint in self.fingerprints.items()]),
+            f"TLS JA3 Classifications: {'; '.join(self.tls_ja3_classifications)}",
+            f"TLS SNIs: {', '.join(self.tls_snis)}",
             f"Count: {self.count}"
         ]
         # Join all the attribute strings with newlines for pretty printing
