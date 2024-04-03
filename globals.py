@@ -86,6 +86,7 @@ class Flags:
         self.paused_device_selected = None
         self.device_switch = False
         self.q_pressed = False
+        self.debug_pwrite = False
 
 class Client:
     """

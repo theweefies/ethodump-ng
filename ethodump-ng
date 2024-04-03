@@ -363,6 +363,8 @@ def parse_packet(p: bytes, own_iface: interface):
                 cur_client.communicants[eth_header.dst_mac] = None
         else:
             cur_client = clients.get(eth_header.src_mac)
+            if not is_multicast_or_broadcast(eth_header.dst_mac):
+                cur_client.communicants[eth_header.dst_mac] = None
 
         # increase packet count for this client
         cur_client.count += 1
@@ -380,6 +382,9 @@ def parse_packet(p: bytes, own_iface: interface):
             if is_private_ipv4(ip_header.src_ip):
                 cur_client.ip_address = ip_header.src_ip
 
+            if is_private_ipv4(ip_header.dst_ip):
+                cur_client.communicants[eth_header.dst_mac] = ip_header.dst_ip
+
             if ip_header.protocol == 17: # UDP
                 udp_header = parse_udp_header(reader)
                 payload = reader.read(udp_header.payload_length)
@@ -394,6 +399,8 @@ def parse_packet(p: bytes, own_iface: interface):
                 
                 elif udp_header.src_port == 68:
                     dhcp_packet = parse_dhcp_packet(payload)
+                    if not dhcp_packet:
+                        write_packet(p, "ethodebug.pcap")
                     match_dhcp_fingerprint(dhcp_packet, cur_client)
                     extract_dhcp_client_details(dhcp_packet, cur_client)
                     cur_client.protocols.add('DHCP')
@@ -401,18 +408,21 @@ def parse_packet(p: bytes, own_iface: interface):
 
                 elif udp_header.src_port == 137 or udp_header.dst_port == 137:
                     nbns_packet = parse_netbios_packet(payload, cur_client)
+                    if not nbns_packet:
+                        write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('NETBIOS-UDP-137')
                     return
                 
                 elif udp_header.src_port == 138 or udp_header.dst_port == 138:
-                    # print('NETBIOS on port 138')
+                    write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('NETBIOS-UDP-138')
                     return
 
                 elif udp_header.dst_port == 1900:
                     ssdp_packet = parse_ssdp_packet(payload, cur_client)
+                    if not ssdp_packet:
+                        write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('SSDP')
-                    #print(ssdp_packet)
                     return
                     
                 elif udp_header.dst_port == 5353: # MDNS
@@ -436,23 +446,28 @@ def parse_packet(p: bytes, own_iface: interface):
 
                 if tcp_header.dst_port == 80: # HTTP
                     find_ua(payload, cur_client)
+                    write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('HTTP')
                     return
                 
                 if tcp_header.dst_port == 443: # HTTPS
                     tls_packet = parse_tls_payload(payload)
+                    if not tls_packet:
+                        write_packet(p, "ethodebug.pcap")
                     if tls_packet:
                         find_ja3_classification(tls_packet, cur_client)
                     cur_client.protocols.add('HTTPS')
                     return
                 
                 if tcp_header.src_port == 445 or tcp_header.dst_port == 445: # SMB
+                    write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('SMB')
                     return
 
                 if tcp_header.src_port == 139:
                     nbns_packet = parse_netbios_packet(payload, cur_client)
-                    #print(nbns_packet)
+                    if not nbns_packet:
+                        write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('NETBIOS-TCP-139')
                     return
                 
@@ -460,7 +475,8 @@ def parse_packet(p: bytes, own_iface: interface):
                 igmp_payload_length = ip_header.total_length - ip_header.header_length
                 payload = reader.read(igmp_payload_length)
                 igmp_packet = parse_igmp(payload)
-                #print(igmp_packet)
+                if not igmp_packet:
+                    write_packet(p, "ethodebug.pcap")
                 cur_client.protocols.add('IGMP')
                 return
             
@@ -469,7 +485,8 @@ def parse_packet(p: bytes, own_iface: interface):
                 icmp_payload_length = ip_header.total_length - ip_header.header_length
                 payload = reader.read(icmp_payload_length)
                 icmp_packet = parse_icmp(payload)
-                #print(icmp_packet)
+                if not icmp_packet:
+                    write_packet(p, "ethodebug.pcap")
                 cur_client.protocols.add('ICMP')
                 return
             
@@ -485,19 +502,26 @@ def parse_packet(p: bytes, own_iface: interface):
 
                 if udp_header.src_port == 5353: # MDNS
                     mdns_packet = parse_dns_packet(payload)
+                    if not mdns_packet:
+                        write_packet(p, "ethodebug.pcap")
                     process_dns_packet(mdns_packet, cur_client)
                     cur_client.protocols.add('MDNSv6')
                     return
                 
                 if udp_header.src_port == 546:
                     dhcpv6_packet = parse_dhcpv6_packet(payload)
+                    write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('DHCPv6')
                     return
                 
             elif ipv6_header.next_header == 0: #ICMPv6
                 icmpv6_packet = parse_icmpv6(reader)
+                if not icmpv6_packet:
+                    write_packet(p, "ethodebug.pcap")
                 cur_client.protocols.add('ICMPv6')
                 return
+            else:
+                write_packet(p, "ethodebug.pcap")
             
 def packet_parser(iface: interface) -> None:
     """
@@ -604,7 +628,7 @@ if __name__ == "__main__":
     # Initialize global flags class for signal management
     flags = Flags()
 
-    # Initialize the queue
+    # Initialize the queue(s)
     packet_queue = queue.Queue(QUEUE_SIZE)
     write_queue = None
 
@@ -633,7 +657,7 @@ if __name__ == "__main__":
     # Start parser threads
     for _ in range(num_workers):
         worker_thread = threading.Thread(target=packet_parser, args=(iface,))
-        worker_thread.daemon = True  # Daemon threads exit when the main program does
+        worker_thread.daemon = True
         worker_thread.start()
 
     # Start the listener thread
@@ -644,12 +668,12 @@ if __name__ == "__main__":
     if not args.debug:
         # Start the display thread
         display_thread = threading.Thread(target=display_devices, args=(clients, status_info,))
-        display_thread.daemon = True  # Daemon thread will exit when main program exits
+        display_thread.daemon = True
         display_thread.start()
 
     # Start the key press listener thread
     keypress_thread = threading.Thread(target=key_press_listener, args=(handle_key_press,))
-    keypress_thread.daemon = True  # Daemon threads will be killed when the main thread exits
+    keypress_thread.daemon = True
     keypress_thread.start()
 
     try:
@@ -659,31 +683,16 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         flags.exit_flag = True
         print("\nCTRL+C pressed, shutting down...")
-        if write_thread:
-            # packets_left = write_queue.qsize()
-            packets_left = packet_count = 20000
-            # while write_queue.qsize() > 0:
-            while packet_count > 0:
-                # sys.stdout.write(f'\rFinishing writing packets to file: {write_queue.qsize()}/{packets_left}     ')
-                sys.stdout.write(f'\rFinishing writing packets to file: {packet_count - 1}/{packets_left}     ')
-                sys.stdout.flush()
-                packet_count -= 1
-                time.sleep(.001)
-            sys.stdout.write('\n\r')
-            flags.write_wait = False
-            write_thread.join(timeout=0.1)
+    
+    if write_thread:
+        packets_left = write_queue.qsize()
+        while write_queue.qsize() > 0:
+            sys.stdout.write(f'\rFinishing writing packets to file: {write_queue.qsize() - 1}/{packets_left}     ')
+            sys.stdout.flush()
+        sys.stdout.write('\n\r')
+        flags.write_wait = False
+        write_thread.join(timeout=0.1)
 
-    """    
-    try:
-        # Wait for threads to exit gracefully
-        while threading.active_count() > 1:
-            for thread in threading.enumerate():
-                if thread is not threading.current_thread():
-                    thread.join(timeout=0)
-    except KeyboardInterrupt:
-        flags.exit_flag = True  # Signal all threads to exit
-        print("\nSignal received, shutting down...")
-        """
     if args.debug:
         for client in clients:
             print(clients[client])

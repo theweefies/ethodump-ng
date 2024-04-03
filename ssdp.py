@@ -11,10 +11,11 @@ SEARCH = 'M-SEARCH'
 UPNP_BASE_STRING = 'UPnP/1.0'
 
 @dataclass
-class SSDPNotify:
+class SSDP:
     type_: str
     location: str
     server: str
+    user_agent: str
 
 def parse_user_agent(user_agent):
     for pattern, device_type in upnp_useragent_patterns:
@@ -29,7 +30,7 @@ def parse_user_agent(user_agent):
     # Return None if no pattern matches
     return None
 
-def parse_ssdp_packet(payload: bytes, cur_client: Client) -> None | SSDPNotify:
+def parse_ssdp_packet(payload: bytes, cur_client: Client) -> None | SSDP:
     """
     Function to parse SSDP Notify messages and extract resource
     urls and perform os detection.
@@ -41,12 +42,21 @@ def parse_ssdp_packet(payload: bytes, cur_client: Client) -> None | SSDPNotify:
     location = None
     server = None
     decoded_payload = payload.decode('utf-8','ignore')
-    if NOTIFY in decoded_payload:
-        type_ = NOTIFY
+    if NOTIFY in decoded_payload or SEARCH in decoded_payload:
+        if NOTIFY in decoded_payload:
+            type_ = NOTIFY
+        elif SEARCH in decoded_payload:
+            type_ = SEARCH
+        else:
+            return None
+
         lines = decoded_payload.split('\r\n')
+        user_agent = ""
+        location = ""
+        server = ""
         for line in lines:
             if 'LOCATION' in line:
-                location = line.split(': ')[1].strip().replace('\r\n','')
+                location = line.split(': ')[1].strip()
                 if location:
                     cur_client.resource_urls.add(location)
             if 'SERVER' in line:
@@ -65,7 +75,10 @@ def parse_ssdp_packet(payload: bytes, cur_client: Client) -> None | SSDPNotify:
                         cur_client.oses.add(match)
                     else:
                         cur_client.oses.add(server)
+            if 'USER-AGENT' in line:
+                user_agent = line.split(': ')[1].strip()
+                cur_client.user_agents.add(user_agent)
 
-        return SSDPNotify(type_, location, server)
+        return SSDP(type_, location, server, user_agent)
     else:
         return None
