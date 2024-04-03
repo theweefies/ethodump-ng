@@ -11,7 +11,7 @@ import struct
 import re
 
 from globals import clean_name, Client
-from models import samsung_models, apple_models, hp_models, blackberry_models, roku_models
+from models import samsung_models, apple_models, hp_models, roku_models
 
 DNS_PTR = 12
 DNS_TXT = 16
@@ -186,7 +186,7 @@ def parse_txt(record: DNSTXT, cur_client: Client) -> None:
         elif k in device_model_tags:
             decoded_value = v.decode('utf-8', 'ignore')
             if k == b"model" and not cur_client.model_check_complete:
-                resolved_model = model_check(decoded_value)
+                resolved_model = model_check(decoded_value.lower())
                 cur_client.model_check_complete = True
                 if resolved_model:
                     cur_client.oses.add(resolved_model)
@@ -270,6 +270,8 @@ def decode_compressed_name(length: int, reader: BytesIO) -> bytes:
     Function to perform DNS name decompression.
     """
     pointer_bytes = bytes([length & 0b0011_1111]) + reader.read(1)
+    if len(pointer_bytes) < 2:
+        return None
     pointer = struct.unpack("!H", pointer_bytes)[0]
     current_pos = reader.tell()
     reader.seek(pointer)
@@ -281,8 +283,11 @@ def parse_header(reader: BytesIO) -> DNSHeader:
     """
     Function to parse a DNS packet header.
     """
-    items = struct.unpack("!HHHHHH", reader.read(12))
-    # see "a note on BytesIO" for an explanation of `reader` here
+    data = reader.read(12)
+    if len(data) < 12:
+        return None
+    items = struct.unpack("!HHHHHH", data)
+
     return DNSHeader(*items)
 
 def parse_record(reader: BytesIO, record_type: str=None) -> None | DNSPTR | DNSANY | DNSA | DNSAAAA | DNSTXT | DNSSRV | DNSNSEC | DNSOPT:
@@ -318,14 +323,10 @@ def parse_record(reader: BytesIO, record_type: str=None) -> None | DNSPTR | DNSA
             return DNSPTR(name, type_, class_, qu_bit, ttl, domain_name)
         
     elif type_ in [DNS_A, DNS_AAAA]:
-        data = reader.read(4)
-        if len(data) < 4:
+        data = reader.read(6)
+        if len(data) < 6:
             return None
-        ttl = struct.unpack('!I', data)[0]
-        data = reader.read(2)
-        if len(data) < 2:
-            return None
-        data_len = struct.unpack('!H', data)[0]
+        ttl, data_len = struct.unpack('!IH', data)
         if data_len == 4: # IPv4 Address (A Record)
             data = reader.read(data_len)
             address = socket.inet_ntoa(data)
@@ -338,10 +339,10 @@ def parse_record(reader: BytesIO, record_type: str=None) -> None | DNSPTR | DNSA
             return None
         
     elif type_ == DNS_TXT:
-        data = reader.read(4)
-        ttl = struct.unpack('!I', data)[0]
-        data = reader.read(2)
-        data_len = struct.unpack('!H', data)[0]
+        data = reader.read(6)
+        if len(data) < 6:
+            return None
+        ttl, data_len = struct.unpack('!IH', data)
         txt_data_list = []  # To hold multiple strings in TXT record
         bytes_read = 0  # Counter for the number of bytes read in the TXT data
         while bytes_read < data_len:
@@ -354,10 +355,10 @@ def parse_record(reader: BytesIO, record_type: str=None) -> None | DNSPTR | DNSA
         return DNSTXT(name, type_, class_, qu_bit, ttl, txt_data_list)
     
     elif type_ == DNS_SRV:
-        data = reader.read(4)
-        ttl = struct.unpack('!I', data)[0]
-        data = reader.read(2)
-        data_len = struct.unpack('!H', data)[0]
+        data = reader.read(6)
+        if len(data) < 6:
+            return None
+        ttl, data_len = struct.unpack('!IH', data)
         priority = weight = port = 0
         target = ""
         if data_len > 5:
@@ -371,10 +372,10 @@ def parse_record(reader: BytesIO, record_type: str=None) -> None | DNSPTR | DNSA
         return DNSSRV(name, type_, class_, qu_bit, ttl, priority, weight, port, target)
     
     elif type_ == DNS_NSEC:
-        data = reader.read(4)
-        ttl = struct.unpack('!I', data)[0]
-        data = reader.read(2)
-        data_len = struct.unpack('!H', data)[0]
+        data = reader.read(6)
+        if len(data) < 6:
+            return None
+        ttl, data_len = struct.unpack('!IH', data)
         # Mark the current position in the reader
         start_pos = reader.tell()
         next_domain_name = decode_name(reader)
@@ -391,8 +392,10 @@ def parse_record(reader: BytesIO, record_type: str=None) -> None | DNSPTR | DNSA
             name = '<Root>'
         udp_payload_size = class_
         cache_flush = qu_bit
-        higher_bits, edns0_version, z = struct.unpack('!BBH', reader.read(4))
-        data_len = struct.unpack('!H', reader.read(2))[0]
+        data = reader.read(6)
+        if len(data) < 6:
+            return None
+        higher_bits, edns0_version, z, data_len = struct.unpack('!BBHH', data)
         options = []  # List to hold (code, data) tuples for each option
         # Keep track of the total bytes read for options to not exceed data_len
         bytes_read_for_options = 0
@@ -433,6 +436,8 @@ def parse_authority(reader: BytesIO) -> DNSAuthoratativeNameservers | None:
         primary_nameserver = b'<Root>'
     responsible_authority = decode_name(reader)
     data = reader.read(20)
+    if len(data) < 20:
+        return None
     serial_number, refresh_interval, retry_interval, expire_limit, min_ttl = struct.unpack("!IIIII", data)
 
     return DNSAuthoratativeNameservers(name, type_, class_, ttl, data_len, primary_nameserver, \
@@ -444,6 +449,9 @@ def parse_dns_packet(data: bytes) -> DNSPacket:
     """
     reader = BytesIO(data)
     header = parse_header(reader)
+
+    if not header:
+        return None
 
     # Lets use list comprehensions with a conditional clause to exclude None values
     questions = [record for record in (parse_record(reader, "q") for _ in range(header.num_questions)) if record is not None]

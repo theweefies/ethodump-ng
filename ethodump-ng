@@ -118,7 +118,7 @@ def handle_key_press(key: str) -> None:
     key presses.
     """
     if key == '\x1b':  # ESC key
-        print("ESC key pressed, exiting...")
+        print("ESC key pressed, exiting...                                             ")
         flags.exit_flag = True
         flags.q_pressed = True
     elif key.isdigit():
@@ -132,32 +132,32 @@ def handle_key_press(key: str) -> None:
             else:
                 flags.device_switch = False
             flags.key_code = int(key)
-        flags.q_pressed = True
+        flags.q_pressed = False
     elif key == ' ':  # Checking for space bar key press
         if flags.paused:
             # If currently paused, unpause and restore any previously expanded device row
-            print("[-] Output unpaused")
+            sys.stdout.write("[-] Output unpaused                                     \r")
             flags.paused = False
+            flags.q_pressed = False
             if flags.paused_device_selected is not None:
                 flags.key_code = flags.paused_device_selected  # Restore the expanded view of the device
                 flags.paused_device_selected = None
         else:
             # If not currently paused, pause the output and remember any currently expanded device row
-            print("[+] Output paused")
+            sys.stdout.write("[+] Output paused                                       \r")
             flags.paused = True
             if flags.key_code is not None:
                 flags.paused_device_selected = flags.key_code  # Remember the currently expanded device
                 flags.key_code = None  # No device row is expanded when paused
-        flags.q_pressed = True
-    elif key.lower() == 'q':  # Checking for 'c' or 'C'
+        flags.q_pressed = False
+    elif key.lower() == 'q':
         if flags.q_pressed == True:
             flags.exit_flag = True
         else:
-            print("[!] Press 'q' again to quit. Press spacebar to continue.")
+            sys.stdout.write("[!] Press 'q' again to quit. Press spacebar to continue.\r")
             flags.paused = True
             flags.q_pressed = True
-    else:
-        flags.q_pressed = True
+    #sys.stdout.flush()
 
 def display_devices(clients_:dict, status_info: StatusInfo) -> None:
     """
@@ -387,7 +387,8 @@ def parse_packet(p: bytes, own_iface: interface):
 
                 if udp_header.src_port == 53: # DNS
                     dns_packet = parse_dns_packet(payload)
-                    #print(dns_packet)
+                    if not dns_packet:
+                        write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('DNS')
                     return
                 
@@ -416,6 +417,8 @@ def parse_packet(p: bytes, own_iface: interface):
                     
                 elif udp_header.dst_port == 5353: # MDNS
                     mdns_packet = parse_dns_packet(payload)
+                    if not mdns_packet:
+                        write_packet(p, "ethodebug.pcap")
                     process_dns_packet(mdns_packet, cur_client)
                     cur_client.protocols.add('MDNS')
                     return
@@ -514,7 +517,7 @@ def packet_writer(filename: str | None) -> None:
     One of main threads. Function pulls packets from dedicated queue
     for writing to file.
     """
-    while not flags.exit_flag:
+    while flags.write_wait:
         try:
             pkt = write_queue.get(timeout=1)
             write_packet(pkt, filename)
@@ -575,7 +578,6 @@ def write_header(filename: str) -> None:
     Function to write the global pcap file header.
     """
     f_out = open(filename, "wb")
-
     f_out.write(PCAP_GLOBAL_HEADER_ETHERNET)
     f_out.close()
 
@@ -604,11 +606,22 @@ if __name__ == "__main__":
 
     # Initialize the queue
     packet_queue = queue.Queue(QUEUE_SIZE)
+    write_queue = None
 
     # Number of consumer threads
     num_workers = 4
 
+    # Initialize threads to Null
+    write_thread = None
+    worker_thread = None
+    listener_thread = None
+    display_thread = None
+    keypress_thread = None
+
     hide_cursor()
+
+    if True:
+        write_header("ethodebug.pcap")
 
     if args.write:
         write_header(args.write)
@@ -640,6 +653,28 @@ if __name__ == "__main__":
     keypress_thread.start()
 
     try:
+        while not flags.exit_flag:
+            pass
+
+    except KeyboardInterrupt:
+        flags.exit_flag = True
+        print("\nCTRL+C pressed, shutting down...")
+        if write_thread:
+            # packets_left = write_queue.qsize()
+            packets_left = packet_count = 20000
+            # while write_queue.qsize() > 0:
+            while packet_count > 0:
+                # sys.stdout.write(f'\rFinishing writing packets to file: {write_queue.qsize()}/{packets_left}     ')
+                sys.stdout.write(f'\rFinishing writing packets to file: {packet_count - 1}/{packets_left}     ')
+                sys.stdout.flush()
+                packet_count -= 1
+                time.sleep(.001)
+            sys.stdout.write('\n\r')
+            flags.write_wait = False
+            write_thread.join(timeout=0.1)
+
+    """    
+    try:
         # Wait for threads to exit gracefully
         while threading.active_count() > 1:
             for thread in threading.enumerate():
@@ -648,7 +683,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         flags.exit_flag = True  # Signal all threads to exit
         print("\nSignal received, shutting down...")
-
+        """
     if args.debug:
         for client in clients:
             print(clients[client])

@@ -72,7 +72,6 @@ def clean_name(name: str) -> str:
 
     return cleaned
 
-# Global flag to signal threads to exit
 class Flags:
     """
     A class to manage global flags, signals, and output
@@ -80,6 +79,7 @@ class Flags:
     """
     def __init__(self):         
         self.exit_flag = False
+        self.write_wait = True
         self.key_code = None
         self.client_count = 1
         self.paused = False
