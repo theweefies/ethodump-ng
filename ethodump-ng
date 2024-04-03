@@ -612,6 +612,7 @@ if __name__ == "__main__":
     ed_argparse.add_argument('-i', '--interface', action='store', type=str, help='Enter the interface on which you want to sniff.', required=True)
     ed_argparse.add_argument('-w', '--write', action='store', type=str, help='Pass the file name to write packets.', required=False)
     ed_argparse.add_argument('-s', '--save', action='store', type=str, help='Pass the file name to save detailed results.', required=False)
+    ed_argparse.add_argument('-r', '--resource-grab', action='store_true', help='Enable resource grabbing (Performs GET against resource urls).', required=False)
     ed_argparse.add_argument('-d', '--debug', action='store_true', help='Set the script debug to verbose.', required=False, default=False)
     ed_argparse.add_argument('-v', '--version', action='version')
 

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import re
+import urllib.request
 
 from globals import Client
 from models import upnp_useragent_patterns
@@ -16,6 +17,26 @@ class SSDP:
     location: str
     server: str
     user_agent: str
+
+def grab_resource(urn, user_agent, filename):
+    """
+    Fetches a resource from the specified URN using a custom User-Agent and saves it to a file.
+
+    :param urn: The Uniform Resource Name (e.g., a URL) of the resource to fetch.
+    :param user_agent: The custom User-Agent string to use for the request.
+    :param filename: The name of the file where the resource will be saved.
+    """
+    # Create a request object with the custom User-Agent
+    req = urllib.request.Request(urn, headers={'User-Agent': user_agent})
+
+    # Perform the request
+    with urllib.request.urlopen(req) as response:
+        # Read the response
+        content = response.read()
+
+        # Save the content to a file
+        with open(filename, 'wb') as f:
+            f.write(content)
 
 def parse_user_agent(user_agent):
     for pattern, device_type in upnp_useragent_patterns:
