@@ -382,7 +382,7 @@ def parse_packet(p: bytes, own_iface: interface):
             if is_private_ipv4(ip_header.src_ip):
                 cur_client.ip_address = ip_header.src_ip
 
-            if is_private_ipv4(ip_header.dst_ip):
+            if is_private_ipv4(ip_header.dst_ip) and not is_multicast_or_broadcast(eth_header.dst_mac):
                 cur_client.communicants[eth_header.dst_mac] = ip_header.dst_ip
 
             if ip_header.protocol == 17: # UDP
@@ -568,7 +568,7 @@ def packet_listener(iface: interface, filename: str | None):
     
     except KeyboardInterrupt:
         flags.exit_flag = True  # Signal all threads to exit
-        print('\nExiting...')
+        print('\nCTRL+C pressed, shutting down...')
     except PermissionError:
         flags.exit_flag = True
         print('Permission Error: This script must be run with sudo.')
