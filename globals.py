@@ -13,6 +13,10 @@ PCAP_GLOBAL_HEADER_ETHERNET = b'\xd4\xc3\xb2\xa1\x02\x00\x04\x00\x00\x00\x00\x00
 
 QUEUE_SIZE = 1000
 
+IPV4_ANY_ADDRESS = '0.0.0.0'
+IPV6_ANY_ADDRESS = '::'
+ETH_ANY_ADDRESS = 'ff:ff:ff:ff:ff:ff'
+
 clients = {}
 oui_table = {}
 oui_file = "oui.csv"
@@ -77,7 +81,8 @@ class Flags:
     A class to manage global flags, signals, and output
     control flags.
     """
-    def __init__(self):         
+    def __init__(self):
+        self.lock = None
         self.exit_flag = False
         self.write_wait = True
         self.key_code = None

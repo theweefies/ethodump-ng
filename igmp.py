@@ -8,15 +8,27 @@ import socket
 from typing import List
 from dataclasses import dataclass, field
 
+MEMBERSHIP_QUERY = 0x11
+MEMBERSHIP_REPORT_V2 = 0x16
+LEAVE_GROUP = 0x17
+MEMBERSHIP_REPORT_V3 = 0x22
+
 @dataclass
 class IGMPQuery:
     type_: int
     max_response_time: int
-    checksum: bytes
+    checksum: int
     multicast_address: str
     srsp_qrv: int
     qqic: int
     num_src: int
+
+@dataclass
+class IGMPLeaveGroup:
+    type_: int
+    max_response_time: int
+    checksum: int
+    multicast_address: str
 
 @dataclass
 class IGMPReportRecord:
@@ -29,8 +41,8 @@ class IGMPReportRecord:
 @dataclass
 class IGMPReport:
     type_: int
-    checksum: bytes
-    reserved: bytes
+    checksum: int
+    reserved: int
     num_group_records: int
     group_records: List[IGMPReportRecord] = field(default_factory=list)
 
@@ -43,11 +55,11 @@ def parse_igmp(payload: bytes) -> None | IGMPQuery | IGMPReport:
     
     type_ = payload[0]
 
-    if type_ in (0x11, ):  # IGMP Membership Query
+    if type_ == MEMBERSHIP_QUERY:
         max_response_time = payload[1] // 10
-        checksum = payload[2:4]
+        checksum = struct.unpack('!H', payload[2:4])[0]
         multicast_address = socket.inet_ntoa(payload[4:8])
-        if len(payload) > 8:
+        if len(payload) > 12:
             srsp_qrv = payload[8]
             qqic = payload[9]
             num_src = struct.unpack('!H', payload[10:12])[0]
@@ -57,18 +69,24 @@ def parse_igmp(payload: bytes) -> None | IGMPQuery | IGMPReport:
             num_src = 0
         return IGMPQuery(type_, max_response_time, checksum, multicast_address, srsp_qrv, qqic, num_src)
 
-    elif type_ in (0x16, ):  # IGMPv2 Membership Report
+    elif type_ == MEMBERSHIP_REPORT_V2:
         max_response_time = payload[1] // 10
-        checksum = payload[2:4]
+        checksum = struct.unpack('!H', payload[2:4])[0]
         multicast_address = socket.inet_ntoa(payload[4:8])
         srsp_qrv = 0
         qqic = 0
         num_src = 0
         return IGMPQuery(type_, max_response_time, checksum, multicast_address, srsp_qrv, qqic, num_src)
 
-    elif type_ in (0x22, ):  # IGMPv3 Membership Report
-        checksum = payload[2:4]
-        reserved = payload[4:6]
+    elif type_ == LEAVE_GROUP:
+        max_response_time = payload[1] // 10
+        checksum = struct.unpack('!H', payload[2:4])[0]
+        multicast_address = socket.inet_ntoa(payload[4:8])
+        return IGMPLeaveGroup(type_, max_response_time, checksum, multicast_address)
+
+    elif type_ == MEMBERSHIP_REPORT_V3:
+        checksum = struct.unpack('!H', payload[2:4])[0]
+        reserved = struct.unpack('!H', payload[4:6])[0]
         num_group_records = struct.unpack('!H', payload[6:8])[0]
         group_records = []
         offset = 8

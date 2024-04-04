@@ -2,14 +2,17 @@
 
 from dataclasses import dataclass
 import re
+import os
 import urllib.request
-
+from urllib.parse import urlparse, ParseResult
+import threading
 from globals import Client
 from models import upnp_useragent_patterns
 
 NOTIFY = 'NOTIFY'
 SEARCH = 'M-SEARCH'
 UPNP_BASE_STRING = 'UPnP/1.0'
+GENERIC_UPNP_UA = 'Mozilla/5.0 (compatible; UPnP/1.1)'
 
 @dataclass
 class SSDP:
@@ -18,7 +21,24 @@ class SSDP:
     server: str
     user_agent: str
 
-def grab_resource(urn, user_agent, filename):
+def check_make_path(dir: str, filename: str) -> str | None:
+    """
+    Function to check if a path exists; creates
+    it if it does not. Returns the full path if 
+    success, just the filename if creating the dir
+    raises an OSError.
+    """
+    cwd = os.getcwd()
+    new_full_path = os.path.join(cwd, dir)
+    if not os.path.exists(new_full_path):        
+        try:
+            os.makedirs(new_full_path, mode=0o777, exist_ok=True)
+        except OSError:
+            return filename
+
+    return os.path.join(new_full_path, filename)
+
+def grab_resource(urn: str, user_agent: str, parsed_urn: ParseResult, lock: threading.Lock):
     """
     Fetches a resource from the specified URN using a custom User-Agent and saves it to a file.
 
@@ -26,17 +46,22 @@ def grab_resource(urn, user_agent, filename):
     :param user_agent: The custom User-Agent string to use for the request.
     :param filename: The name of the file where the resource will be saved.
     """
-    # Create a request object with the custom User-Agent
-    req = urllib.request.Request(urn, headers={'User-Agent': user_agent})
+    with lock:
+        # Create a request object with the custom User-Agent
+        req = urllib.request.Request(urn, headers={'User-Agent': user_agent})
 
-    # Perform the request
-    with urllib.request.urlopen(req) as response:
-        # Read the response
-        content = response.read()
-
-        # Save the content to a file
-        with open(filename, 'wb') as f:
-            f.write(content)
+        # Perform the request
+        with urllib.request.urlopen(req) as response:
+            # Read the response
+            content = response.read()
+            if content:
+                dir_name = parsed_urn.hostname
+                filename = parsed_urn.path.strip('/')
+                abs_path = check_make_path(dir_name, filename)
+                
+                # Save the content to a file
+                with open(abs_path, 'wb') as f:
+                    f.write(content)
 
 def parse_user_agent(user_agent):
     for pattern, device_type in upnp_useragent_patterns:
@@ -51,7 +76,7 @@ def parse_user_agent(user_agent):
     # Return None if no pattern matches
     return None
 
-def parse_ssdp_packet(payload: bytes, cur_client: Client) -> None | SSDP:
+def parse_ssdp_packet(payload: bytes, cur_client: Client, lock, grab_resources: bool=False) -> None | SSDP:
     """
     Function to parse SSDP Notify messages and extract resource
     urls and perform os detection.
@@ -79,6 +104,10 @@ def parse_ssdp_packet(payload: bytes, cur_client: Client) -> None | SSDP:
             if 'LOCATION' in line:
                 location = line.split(': ')[1].strip()
                 if location:
+                    if grab_resources and location not in cur_client.resource_urls:
+                            parsed_urn = urlparse(location)
+                            if parsed_urn:
+                                grab_resource(location, GENERIC_UPNP_UA, parsed_urn, lock)
                     cur_client.resource_urls.add(location)
             if 'SERVER' in line:
                 server = line.split(': ')[1].strip()
