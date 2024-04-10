@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from globals import bytes_to_ip, bytes_to_mac, Client
 from io import BytesIO
 
-from globals import Flags
+from globals import Flags, ETH_ANY_ADDRESS, ETH_BCAST_ADDRESS
 
 ARP_REQUEST = 1
 ARP_REPLY = 2
@@ -60,7 +60,7 @@ def process_arp(arp_packet: ARP, clients: dict, flags: Flags) -> None:
         sender.ip_address = arp_packet.sender_ip
 
     # For ARP requests, check if the target is known and update or add it similarly
-    if arp_packet.opcode == ARP_REQUEST and arp_packet.target_mac != '00:00:00:00:00:00':
+    if arp_packet.opcode == ARP_REQUEST and arp_packet.target_mac not in [ETH_BCAST_ADDRESS, ETH_ANY_ADDRESS]:
         target = clients.get(arp_packet.target_mac)
         if not target:
             target = Client(arp_packet.target_mac, flags.client_count)  # Target IP might not be known from ARP request

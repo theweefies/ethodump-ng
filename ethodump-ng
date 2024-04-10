@@ -4,42 +4,44 @@
 Main module for ethodump-ng.
 
 DNS From:  https://implement-dns.wizardzines.com/book/part_1
-"""
 
+/usr/bin/../share/nmap/nselib/data/http-fingerprints.lua
+"""
+import os
+import sys
+import tty
+import time
+import queue
+import select
 import socket
 import struct
-import re
-import sys
-import time
+import termios
 import argparse
 import netifaces
 import threading
-import queue
-import ipaddress
+
 from io import BytesIO
 
-import tty
-import termios
-import select
-
 from arp import parse_arp, process_arp
-from mdns import parse_mdns_packet, process_mdns_packet
-from dns import parse_dns_packet, process_dns_packet
-from dhcp import parse_dhcp_packet, parse_dhcpv6_packet, \
-    extract_dhcp_client_details, match_dhcp_fingerprint
-from tcp_udp import parse_eth_header, parse_ip_header, \
-    parse_tcp_header, parse_udp_header, parse_ipv6_header
-from igmp import parse_igmp
-from icmp import parse_icmp, parse_icmpv6
-from netbios import parse_netbios_packet
-from ssdp import parse_ssdp_packet
+from dns_ import parse_dns_packet, process_dns_packet
 from tls import parse_tls_payload, find_ja3_classification
-from globals import Client, oui_table, oui_file, clients
+from dhcp import parse_dhcp_packet, parse_dhcpv6_packet, extract_dhcp_client_details, match_dhcp_fingerprint
+from icmp import parse_icmp, parse_icmpv6
+from igmp import parse_igmp
+from mdns import parse_mdns_packet, process_mdns_packet
+from ssdp import parse_ssdp_packet
+from http_ import parse_http, detect_service_banner
+from tcp_udp import parse_eth_header, parse_ip_header, parse_tcp_header, parse_udp_header, parse_ipv6_header
+from netbios import parse_netbios_packet, parse_netbios_datagram
+
+from globals import MAGIC, CIGAM
+from globals import DARK_RED, DEFAULT, CURSOR_TO_TOP, CLEAR_SCREEN_CURSOR_TO_TOP
 from globals import ETH_P, ARP_P, ETH_P_ALL, ETH_IPV6
-from globals import ETH_ANY_ADDRESS, IPV6_ANY_ADDRESS
+from globals import ETH_BCAST_ADDRESS, IPV6_ANY_ADDRESS
 from globals import PCAP_GLOBAL_HEADER_ETHERNET, QUEUE_SIZE
-from globals import Flags
-from globals import DARK_RED, DEFAULT
+from globals import Client, Flags
+from globals import oui_table, oui_file, clients
+from globals import is_private_ipv4, add_port, add_ttl
 
 class interface:
     """
@@ -52,6 +54,11 @@ class interface:
 
     def __init__(self, name: str):
         self.interface_name = name
+        if not self.interface_name: # This for read file mode
+            self.mac = ""
+            self.ip = ""
+            self.gateway = ""
+            return
         self.get_own_addresses()
         try:
             gateways = netifaces.gateways()
@@ -81,6 +88,7 @@ class StatusInfo:
         self.start_time = time.time()
         self.status_message = ""
         self.message_printed = False
+        self.pcap_read = ""
 
 def hide_cursor() -> None:
     """
@@ -123,7 +131,9 @@ def handle_key_press(key: str) -> None:
         flags.exit_flag = True
         flags.q_pressed = True
     elif key.isdigit():
-        sys.stdout.write('\x1b[2J\x1b[H')
+        #with flags.lock:
+        #sys.stdout.write('\x1b[2J\x1b[H')
+        sys.stdout.write(CLEAR_SCREEN_CURSOR_TO_TOP)
         if flags.key_code == int(key):
             flags.key_code = None
             flags.device_switch = False
@@ -158,7 +168,6 @@ def handle_key_press(key: str) -> None:
             sys.stdout.write("[!] Press 'q' again to quit. Press spacebar to continue.\r")
             flags.paused = True
             flags.q_pressed = True
-    #sys.stdout.flush()
 
 def display_devices(clients_:dict, status_info: StatusInfo) -> None:
     """
@@ -174,12 +183,17 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
     # Define the header and row formats using the maximum widths
     header_format = " ".join([f"{{:<{max_widths[col]}}}" for col in max_widths])
     header = header_format.format(*max_widths.keys())
-    sys.stdout.write('\x1b[2J\x1b[H')
+    sys.stdout.write('\x1b[2J\x1b[H') # initial clear screen and move cursor to top left
+
     while not flags.exit_flag:
 
         clients_dict = clients_.copy()
 
         if not flags.paused:
+            #with flags.lock:
+
+            display_body = ""
+
             current_time = time.time()
             elapsed_time = int(current_time - status_info.start_time)
             elapsed_str = f"{elapsed_time // 60} min" if elapsed_time >= 60 else f"{elapsed_time} s"
@@ -188,19 +202,18 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
             if not flags.key_code:
                 status_info.status_message = ""
                 status_info.message_printed = False
+            
             if flags.device_switch:
                 status_info.status_message = ""
                 status_info.message_printed = False
                 flags.device_switch = False
 
-            status_line = f"{status_info.interface} ][ Elapsed: {elapsed_str} ][ {current_date_time} {status_info.status_message}"
+            status_line = f"{status_info.interface} ][ Elapsed: {elapsed_str} ][ {current_date_time} {status_info.pcap_read} {status_info.status_message}"
 
-            sys.stdout.write('\x1b[H')  # Move cursor to top
-            # sys.stdout.write('\x1b[2J\x1b[H')  # Clear screen and move cursor to top
-            sys.stdout.write(' ' + status_line + '\n\n')
+            display_body += CURSOR_TO_TOP
+            display_body += " " + status_line + '\n\n' 
             # Print the header
-            sys.stdout.write(' ' + header + '\n')
-            
+            display_body += " " + header + "\n"
             # Iterate through the clients dictionary and print each row
             for client_mac, client_data in clients_dict.items():
                 client_dict = client_data.to_dict()  # Convert the client object to a dictionary
@@ -220,10 +233,9 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
 
                 # Format and print the row
                 if flags.key_code and client_dict["#"] == flags.key_code:
-                    sys.stdout.write(DARK_RED)
+                    display_body += DARK_RED
                 formatted_row = header_format.format(*truncated_dict.values())
-                sys.stdout.write(' ' + formatted_row + '\n')
-                sys.stdout.flush()
+                display_body += " " + formatted_row + "\n"
                 if flags.key_code and client_dict["#"] == flags.key_code:
                     if not status_info.message_printed:
                         status_info.status_message += f"][ + Device {flags.key_code} expanded"
@@ -237,12 +249,13 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
                                 additional_row[k] = str(values[i + 1])[:max_widths[k]]
                         # Format and print the additional row
                         formatted_additional_row = header_format.format(*additional_row.values())
-                        sys.stdout.write(' ' + formatted_additional_row + '\n')
-                        sys.stdout.flush()
+                        display_body += " " + formatted_additional_row + "\n"
                 if flags.key_code and client_dict["#"] == flags.key_code:
-                    sys.stdout.write(DEFAULT)
+                    display_body += DEFAULT
+            display_body += "\n"
+            sys.stdout.write(display_body)
             sys.stdout.flush()
-            time.sleep(1)  # Update every second
+            time.sleep(.6)  # Update every half second
         else:
             pass
 
@@ -250,7 +263,7 @@ def is_multicast_or_broadcast(mac_address: str) -> bool:
     """
     Check if the MAC address is multicast or broadcast.
     """
-    if mac_address == ETH_ANY_ADDRESS:
+    if mac_address == ETH_BCAST_ADDRESS:
         return True  # Broadcast address
     # Split the MAC address string into octets and take the first one
     first_octet_str = mac_address.split(':')[0]  # Assuming MAC address is separated by ':'
@@ -258,17 +271,6 @@ def is_multicast_or_broadcast(mac_address: str) -> bool:
     first_octet_int = int(first_octet_str, 16)  # Convert from hexadecimal to integer
     # Multicast address check (LSB of first octet is 1)
     return (first_octet_int & 0x01) == 0x01
-
-def extract_os_from_user_agent(user_agent: str) -> str:
-    """
-    Extract os details from the user agent.
-    """
-    # If no OS match, try to return the portion inside the first set of parentheses
-    parenthetical_match = re.search(r'\(([^)]+)\)', user_agent)
-    if parenthetical_match:
-        return parenthetical_match.group(1)
-    
-    return ""
 
 def load_oui() -> None:
     """
@@ -306,53 +308,15 @@ def is_self_L2_L3(packet_mac: str, iface: interface, packet_ip: str) -> bool:
     else:
         return False
 
-def is_private_ipv4(ip_str: str) -> bool:
-    """
-    Function to test if an ip address is private.
-    """
-    try:
-        ip = ipaddress.ip_address(ip_str)
-        if ip.is_private:
-            return True
-        return False
-    except ValueError:
-        return False
-    
-def add_port(src_port: int, cur_client: Client) -> None:
-    """
-    Function to add a port number to the client class instance.
-    """
-    if src_port < 5500:
-        cur_client.ports.add(src_port)
-
-def find_ua(payload: bytes, cur_client: Client) -> None:
-    """
-    Function to find a User-Agent from an http payload. Call
-    to extract_os_from_user_agent attempt to extract system/
-    build/os version and add to client class instance.
-    """
-    os_string = ""
-    user_agent = ""
-
-    user_agent_start = payload.find(b'User-Agent: ')
-    if user_agent_start != -1:  # User-Agent header found
-        # Find the end of the line starting from the User-Agent position
-        user_agent_end = payload.find(b'\r\n', user_agent_start)
-        if user_agent_end != -1:
-            # Extract the User-Agent value, excluding 'User-Agent: ' (12 bytes)
-            user_agent = payload[user_agent_start + 12:user_agent_end].decode('utf-8', 'ignore')
-            os_string = extract_os_from_user_agent(user_agent)
-    if user_agent:
-        cur_client.user_agents.add(user_agent)
-    if os_string:
-        cur_client.oses.add(os_string)
-
 def parse_packet(p: bytes, own_iface: interface, args) -> None:
     """
     Main packet parsing function. Processes Layer 2&^ headers by addressing
     protocols, and ports. 
     """
+
     GRAB_RESOURCES = args.resource_grab
+    if args.read_pcap:
+        GRAB_RESOURCES = False
 
     reader = BytesIO(p)
     eth_header = parse_eth_header(reader)
@@ -391,10 +355,11 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                 udp_header = parse_udp_header(reader)
                 payload = reader.read(udp_header.payload_length)
                 add_port(udp_header.src_port, cur_client)
+                add_ttl(ip_header.ttl, udp_header.src_port, udp_header.dst_port, cur_client)
 
                 if udp_header.src_port == 53 or udp_header.dst_port == 53: # DNS
                     dns_packet = parse_dns_packet(payload)
-                    print(dns_packet)
+                    process_dns_packet(dns_packet, cur_client)
                     if not dns_packet:
                         write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('DNS')
@@ -417,6 +382,7 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                     return
                 
                 elif udp_header.src_port == 138 or udp_header.dst_port == 138:
+                    nbns_packet = parse_netbios_datagram(payload)
                     write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('NETBIOS-UDP-138')
                     return
@@ -437,20 +403,22 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                     return
 
             elif ip_header.protocol == 6: # TCP
-                cur_client.ttl = ip_header.ttl
                 tcp_header = parse_tcp_header(reader)
                 tcp_header.payload_length = ip_header.total_length - ip_header.header_length - tcp_header.header_length
                 payload = reader.read(tcp_header.payload_length)
                 add_port(tcp_header.src_port, cur_client)
+                add_ttl(ip_header.ttl, tcp_header.src_port, tcp_header.dst_port, cur_client)
+
+                detect_service_banner(payload, cur_client)
+
+                if b'GET' in payload or b'HTTP' in payload:
+                    parse_http(payload, cur_client, flags.lock, GRAB_RESOURCES)
+                    write_packet(p, "ethodebug.pcap")
+                    cur_client.protocols.add('HTTP')
+                    return                
 
                 if tcp_header.dst_port == 22 or tcp_header.src_port == 22:
                     cur_client.protocols.add('SSH')
-                    return
-
-                if tcp_header.dst_port == 80: # HTTP
-                    find_ua(payload, cur_client)
-                    write_packet(p, "ethodebug.pcap")
-                    cur_client.protocols.add('HTTP')
                     return
                 
                 if tcp_header.dst_port == 443: # HTTPS
@@ -532,7 +500,75 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                 return
             else:
                 write_packet(p, "ethodebug.pcap")
-            
+
+def packet_reader(filename: str):
+    """
+    One of main threads. Function to read packets from file
+    """
+    header = None
+    fcs_num_bytes = 0
+    fcs_present = 0
+
+    with open(filename, 'rb') as in_f:
+        header = in_f.read(24)
+        if len(header) < 24:
+            print("ERROR: Incomplete file header.")
+            flags.exit_flag = True
+            return False
+
+        # Unpack the global header
+        magic, version_major, version_minor, thiszone, sigfigs, snaplen, linktype = struct.unpack('IHHIIII', header)
+
+        linktype = linktype & 0x0FFFFFFF
+        fcs_present = linktype & 0x10000000
+        fcs_num_bytes = (linktype & 0xF0000000) << 1
+
+        # Determine the file's endianness
+        if magic == MAGIC:
+            endianness = "<"  # Little endian
+        elif magic == CIGAM:
+            endianness = ">"  # Big endian
+        else:
+            print(f"ERROR: Unrecognized magic number: {magic}")
+            flags.exit_flag = True
+            return False
+
+        count = 0
+        ts_prev = None
+
+        while not flags.exit_flag:
+            pkt_header = in_f.read(16)
+            if len(pkt_header) < 16:
+                if len(pkt_header) == 0:
+                    break  # End of file
+                else:
+                    print("ERROR: Incomplete packet header.")
+                    break
+
+            ts_s, ts_m, cap_len, orig_len = struct.unpack(endianness + 'IIII', pkt_header)
+            ts_cur = ts_s + ts_m / 1e6  # Convert microseconds part to seconds and add
+
+            pkt = in_f.read(cap_len)
+            if len(pkt) < cap_len:
+                print("ERROR: Incomplete packet data.")
+                break
+
+            # Handling Frame Check Sequence (FCS) if present
+            if fcs_present:
+                pkt = pkt[:-fcs_num_bytes]
+
+            packet_queue.put(pkt)
+            count += 1
+
+            status_info.pcap_read = f"][ Packets read: {count}"
+
+            if ts_prev is not None:
+                time.sleep(ts_cur - ts_prev)  # Sleep for the duration between the current and previous packet
+
+            ts_prev = ts_cur
+    
+    flags.exit_flag = True
+
 def packet_parser(iface: interface, args) -> None:
     """
     One of main threads. Function pulls packets from the queue
@@ -619,33 +655,23 @@ if __name__ == "__main__":
 
     ed_argparse = argparse.ArgumentParser(prog='ethodump-ng', description='An Ethernet packet sniffing tool.')
     ed_argparse.version = '1.0'
-    ed_argparse.add_argument('-i', '--interface', action='store', type=str, help='Enter the interface on which you want to sniff.', required=True)
+    ed_argparse.add_argument('-i', '--interface', action='store', type=str, help='Enter the interface on which you want to sniff.', required=False)
     ed_argparse.add_argument('-w', '--write', action='store', type=str, help='Pass the file name to write packets.', required=False)
     ed_argparse.add_argument('-s', '--save', action='store', type=str, help='Pass the file name to save detailed results.', required=False)
-    ed_argparse.add_argument('-r', '--resource-grab', action='store_true', help='Enable resource grabbing (Performs GET against resource urls).', required=False)
+    ed_argparse.add_argument('-r', '--resource-grab', action='store_true', help='Enable resource grabbing (Performs GET against resource urns).', required=False)
+    ed_argparse.add_argument('-p', '--read-pcap', action='store', type=str, help='Pass a pcap file to read', required=False)
     ed_argparse.add_argument('-d', '--debug', action='store_true', help='Set the script debug to verbose.', required=False, default=False)
     ed_argparse.add_argument('-v', '--version', action='version')
 
     args = ed_argparse.parse_args()
 
-    load_oui()
-
-    # Initialize global interface object class
-    iface = interface(args.interface)
-
-    # Initialize global display status info and input control class
-    status_info = StatusInfo(args.interface)
-
-    # Initialize global flags class for signal management
-    flags = Flags()
-
-    # Initialize the queue(s)
-    packet_queue = queue.Queue(QUEUE_SIZE)
+    iface = None
+    interface_name = ""
+    # Set queues to None
     write_queue = None
-
+    packet_queue = None
     # Number of consumer threads
     num_workers = 4
-
     # Initialize threads to Null
     write_thread = None
     worker_thread = None
@@ -653,12 +679,37 @@ if __name__ == "__main__":
     display_thread = None
     keypress_thread = None
 
+    if not args.interface and not args.read_pcap:
+        print('ERROR: either --interface or --read must be specified.')
+        sys.exit()
+
+    if args.interface:
+        interface_name = args.interface
+
+    load_oui()
+
+    # Initialize global interface object class
+    iface = interface(interface_name)
+    # Initialize global display status info and input control class
+    status_info = StatusInfo(interface_name)
+    # Initialize global flags class for signal management
+    flags = Flags()
+    # Initialize the queue(s)
+    packet_queue = queue.Queue(QUEUE_SIZE)
+    # Set the threading lock
+    flags.lock = threading.Lock()
+    
     hide_cursor()
 
-    flags.lock = threading.Lock()
-
+    # temporary development mode measure
     if True:
         write_header("ethodebug.pcap")
+
+    if args.read_pcap:
+        if not os.path.exists(args.read_pcap):
+            print(f'ERROR: File does not exist: {args.read_pcap}.')
+            sys.exit()
+        status_info.interface = args.read_pcap
 
     if args.write:
         write_header(args.write)
@@ -673,11 +724,17 @@ if __name__ == "__main__":
         worker_thread.daemon = True
         worker_thread.start()
 
+    if args.read_pcap:
+        # start the read thread
+        read_thread = threading.Thread(target=packet_reader, args=(args.read_pcap,))
+        read_thread.daemon = True
+        read_thread.start()
 
-    # Start the listener thread
-    listener_thread = threading.Thread(target=packet_listener, args=(iface,args.write,))
-    listener_thread.daemon = True
-    listener_thread.start()
+    if not args.read_pcap:
+        # Start the listener thread
+        listener_thread = threading.Thread(target=packet_listener, args=(iface,args.write,))
+        listener_thread.daemon = True
+        listener_thread.start()
 
     if not args.debug:
         # Start the display thread

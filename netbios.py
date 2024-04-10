@@ -14,6 +14,14 @@ ANSWER = 1
 SERVER_SERVICE = '<20>'
 MASTER_BROWSER = '<1b>'
 DOMAIN_CONTROLLER = '<1c>'
+MAIL_SLOT = '<00>'
+
+MSBROWSE = 'MSBROWSE'
+
+SMB1_SERVER_COMPONENT = b'\xff\x53\x4d\x42'
+SMB2_3_SERVER_COMPONENT = b'\xff\x53\x4d\x42'
+
+TRANSACTION_REQUEST = b'\x25'
 
 @dataclass
 class NetBIOSQuery:
@@ -39,6 +47,77 @@ class NetBIOSResponse:
     answers: int
     name_records: List[NetBIOSNameRecord] = field(default_factory=list)
 
+@dataclass
+class NetBIOSDatagram:
+    msg_type: int
+    flags: int
+    datagram_id: int
+    src_ip: str
+    src_port: int
+    packet_offset: int
+    src_name: str
+    dst_name: str
+    blocks: list
+
+@dataclass
+class SMBHeader:
+    server_component: bytes
+    command: int
+    error_class: int
+    reserved: int
+    error_code: int
+    flags: int
+    flags2: int
+    process_id_high: int
+    signature: bytes
+    reserved2: int
+    tree_id: int
+    process_id: int
+    user_id: int
+    multiplex_id: int
+
+@dataclass
+class SMBTrxRequest:
+    word_count: int
+    total_param_count: int
+    total_data_count: int
+    max_param_count: int
+    max_data_count: int
+    max_setup_count: int
+    trx_reserved: int
+    trx_flags: int
+    timeout: int
+    trx_reserved2: int
+    param_count: int
+    param_offset: int
+    data_count: int
+    data_offset: int
+    setup_count: int
+    trx_reserved3: int
+    byte_count: int
+    transaction_name: str
+
+@dataclass
+class SMBMailslot:
+    opcode: int
+    priority: int
+    class_: int
+    size: int
+    mailslot_name: str
+
+@dataclass
+class MSFWindowsBrowser:
+    command: int
+    update_count: int
+    update_period: int
+    hostname: str
+    os_major: int
+    os_minor: int
+    server_type: int
+    browser_major: int
+    browser_minor: int
+    signature: int
+    host_comment: str
 
 @dataclass
 class NBNSHeader:
@@ -103,27 +182,33 @@ def parse_netbios_record(reader: BytesIO, cur_client: Client, record_type: int=N
     """
     Function to parse a netbios record.
     """
-    # Example parsing for a name record (adjust according to your specific needs)
     name = reader.read(34)
     if len(name) < 34:
         return None
 
     encoded_name = name.decode('ascii').strip()[:32]
     decoded_name, control_code = decode_netbios_name(encoded_name)
-    # print('\nDecoded name:', decoded_name)
-    # print('Control code:', control_code)
 
+    print('Decoded name: ', decoded_name, ' Control Code: ', control_code)
+    
     if record_type == QUERY:
         if control_code == SERVER_SERVICE or control_code == MASTER_BROWSER:
             cur_client.connections.add(decoded_name)
         elif control_code == DOMAIN_CONTROLLER:
             cur_client.hostnames.add(decoded_name)
         record_contents = reader.read(4)
+        if len(record_contents) < 4:
+            return None
         type_, class_ = struct.unpack('!HH', record_contents)
         return NetBIOSQuery(decoded_name, type_, class_)
     else:
-        cur_client.hostnames.add(decoded_name)
+        if MSBROWSE in decoded_name:
+            cur_client.services.add(decoded_name)
+        else:
+            cur_client.hostnames.add(decoded_name)
         record_contents = reader.read(12)
+        if len(record_contents) < 12:
+            return None
         type_, class_, ttl, data_length, flags = struct.unpack('!HHIHH', record_contents)
         address = socket.inet_ntoa(reader.read(4))  # Assuming IPv4 address
         return NetBIOSNameRecord(decoded_name, type_, class_, ttl, data_length, flags, address)
@@ -161,3 +246,140 @@ def parse_netbios_packet(data: bytes, cur_client: Client) -> None | NBNSPacket:
     additionals = [record for record in (parse_netbios_record(reader, cur_client) for _ in range(header.num_additionals)) if record is not None]
 
     return NBNSPacket(header, questions, answers, authorities, additionals)
+
+def parse_netbios_datagram(data: bytes):
+    """
+    Function to parse NBNS Datagram packets.
+    """
+    reader = BytesIO(data)
+    data = reader.read(4)
+    if len(data) < 4:
+        return None
+    message_type, flags, datagram_id = struct.unpack('!BBH', data)
+    data = reader.read(4)
+    if len(data) < 4:
+        return None
+    src_ip = socket.inet_ntoa(data)
+    data = reader.read(6)
+    if len(data) < 6:
+        return None
+    src_port, datagram_len, pkt_offset = struct.unpack('!HHH', data)
+    name = reader.read(34)
+    if len(name) < 34:
+        return None
+
+    encoded_src_name = name.decode('ascii').strip()[:32]
+    decoded_src_name, src_ctrl_code = decode_netbios_name(encoded_src_name)
+    src_name = decoded_src_name + src_ctrl_code
+
+    name = reader.read(34)
+    if len(name) < 34:
+        return None
+    
+    encoded_dst_name = name.decode('ascii').strip()[:32]
+    decoded_dst_name, dst_ctrl_code = decode_netbios_name(encoded_dst_name)
+    dst_name = decoded_dst_name + dst_ctrl_code
+
+    blocks = []
+    data = reader.read(4)
+    if len(data) < 4:
+        return NetBIOSDatagram(message_type, flags, datagram_id, src_ip, src_port, pkt_offset, src_name, dst_name, blocks)
+    
+    smb_header = None
+    transaction_request = None
+
+    # Additional checks and parsing for SMB Header and Trans Request
+    if data == SMB1_SERVER_COMPONENT:
+        # SMB Header
+        smb_header_fmt = '!BBBHBHH8sHHHHH'
+        smb_header_len = struct.calcsize(smb_header_fmt)
+        smb_header_data = reader.read(smb_header_len)
+        
+        if len(smb_header_data) < smb_header_len:
+            return NetBIOSDatagram(message_type, flags, datagram_id, src_ip, src_port, pkt_offset, src_name, dst_name, ["Malformed SMB Header"])
+
+        (command, error_class, reserved, error_code, smb_flags, smb_flags2, 
+         process_id_high, signature, reserved2, tree_id, process_id, 
+         user_id, multiplex_id) = struct.unpack(smb_header_fmt, smb_header_data)
+
+        smb_header = SMBHeader(SMB1_SERVER_COMPONENT, command, error_class, reserved, error_code, smb_flags,\
+                               smb_flags2, process_id_high, signature, reserved2, tree_id, process_id, user_id, multiplex_id)
+
+        # SMB Trans Request parsing
+        if command == 0x25:  # Trans Command
+            trans_req_fmt = '<BHHHHBBHIHHHHHBB'
+            trans_req_len = struct.calcsize(trans_req_fmt)
+            trans_req_data = reader.read(trans_req_len)
+
+            if len(trans_req_data) < trans_req_len:
+                return NetBIOSDatagram(message_type, flags, datagram_id, src_ip, src_port, pkt_offset, src_name, dst_name, [smb_header])
+
+            (word_count, total_param_count, total_data_count, max_param_count,
+             max_data_count, max_setup_count, trx_reserved, trx_flags, timeout, trx_reserved2,
+             param_count, param_offset, data_count, data_offset, setup_count,
+             trx_reserved3) = struct.unpack(trans_req_fmt, trans_req_data)
+
+            mailslot_fmt = '<HHHH'
+            mailslot_len = struct.calcsize(mailslot_fmt)
+            mailslot_data = reader.read(mailslot_len)
+
+            if len(mailslot_data) < mailslot_len:
+                return NetBIOSDatagram(message_type, flags, datagram_id, src_ip, src_port, pkt_offset, src_name, dst_name, [smb_header])
+            
+            opcode, priority, class_, size = struct.unpack(mailslot_fmt, mailslot_data)
+
+            byte_count = size
+
+            mailslot_name_encoded = reader.read(word_count)
+            mailslot_name = mailslot_name_encoded[:-1].decode('utf-8', 'ignore')
+            transaction_name = mailslot_name
+            
+            transaction_request = SMBTrxRequest(word_count, total_param_count, total_data_count, max_param_count, max_data_count,\
+                                                max_setup_count, trx_reserved, trx_flags, timeout, trx_reserved2, param_count,\
+                                                param_offset, data_count, data_offset, setup_count, trx_reserved3, byte_count,\
+                                                transaction_name)
+
+            mailslot_header = SMBMailslot(opcode, priority, class_, size, mailslot_name)
+
+            msfwb_proto_data = reader.read(data_count)
+            if len(msfwb_proto_data) < data_count or data_count == 0:
+                return NetBIOSDatagram(message_type, flags, datagram_id, src_ip, src_port, pkt_offset, src_name, dst_name, \
+                                       [smb_header, transaction_request, mailslot_header])
+            
+            msfwb_command = msfwb_proto_data[0]
+            if msfwb_command in [0x01, 0x0c, 0x0f]:   # Host Announcement, domain/workgroup announcement, local master announcement
+                update_count, update_period = struct.unpack('<BI', msfwb_proto_data[1:6])
+                 # Assuming the hostname is always padded to 16 bytes, we directly slice it
+                hostname_encoded = msfwb_proto_data[6:22]  # Slice out the hostname, assuming fixed 16-byte padding
+                hostname = hostname_encoded.decode('utf-8', 'ignore').rstrip('\x00')  # Remove any null byte padding from the decoded hostname
+                
+                # The version info starts immediately after the 16-byte hostname
+                version_info = msfwb_proto_data[22:]
+
+                windows_major = version_info[0]
+                windows_minor = version_info[1]
+                server_type = struct.unpack('<I', version_info[2:6])[0]
+                browser_major = version_info[6]
+                browser_minor = version_info[7]
+                browser_signature = version_info[8:10]
+                
+                # Decode the remaining bytes for the host comment, ensuring to ignore any trailing null bytes
+                host_comment = version_info[10:].decode('utf-8', 'ignore').rstrip('\x00')
+                msft_windows_browser_header = MSFWindowsBrowser(msfwb_command, update_count, update_period, hostname,\
+                                        windows_major, windows_minor, server_type, browser_major, browser_minor,\
+                                        browser_signature, host_comment)
+                return NetBIOSDatagram(message_type, flags, datagram_id, src_ip, src_port, pkt_offset, src_name, dst_name, \
+                                       [smb_header, transaction_request, mailslot_header, msft_windows_browser_header])
+            
+            elif msfwb_command == 0x09: # Get Backup List Request
+                backup_list_req_count, backup_req_token = struct.unpack('<BI', msfwb_proto_data[1:6])
+                msft_windows_browser_header = (msfwb_command, backup_list_req_count, backup_req_token)
+                return NetBIOSDatagram(message_type, flags, datagram_id, src_ip, src_port, pkt_offset, src_name, dst_name, \
+                                       [smb_header, transaction_request, mailslot_header, msft_windows_browser_header])
+            else:
+                return NetBIOSDatagram(message_type, flags, datagram_id, src_ip, src_port, pkt_offset, src_name, dst_name, \
+                                       [smb_header, transaction_request, mailslot_header])
+        else:
+            return NetBIOSDatagram(message_type, flags, datagram_id, src_ip, src_port, pkt_offset, src_name, dst_name, [smb_header])
+
+

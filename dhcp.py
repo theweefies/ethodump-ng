@@ -106,7 +106,7 @@ def extract_dhcp_client_details(dhcp_packet: DHCPPacket, cur_client: Client) -> 
     """
     hostname = get_dhcp_option(dhcp_packet, DHCP_HNAME_OPT)
     hostname_decoded = is_utf8_decodable(hostname)
-    if hostname_decoded:
+    if hostname_decoded and len(hostname_decoded) > 3:
         hostname_cleaned = clean_name(hostname_decoded)
         cur_client.hostnames.add(hostname_cleaned)
     vendor_class = get_dhcp_option(dhcp_packet, DHCP_VCLASS_OPT)
@@ -115,7 +115,7 @@ def extract_dhcp_client_details(dhcp_packet: DHCPPacket, cur_client: Client) -> 
         cur_client.oses.add(cur_client.vendor_class)
     client_id = get_dhcp_option(dhcp_packet, DHCP_CLIENTID_OPT)
     client_id_decoded = is_utf8_decodable(client_id)
-    if client_id_decoded:
+    if client_id_decoded and len(client_id_decoded) > 3:
         client_id_cleaned = clean_name(client_id_decoded)
         cur_client.hostnames.add(client_id_cleaned)
     

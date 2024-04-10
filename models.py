@@ -4,6 +4,13 @@
 Model signature and fingerprinting hashtables for ethodump-ng
 """
 
+# Signature database for service banners
+banner_signatures = {
+    "HTTP": [r"HTTP/\d\.\d \d{3} .*"],
+    "SSH": [r"SSH-\d\.\d-.*"],
+    "FTP": [r"220 .* FTP server.*"]
+}
+
 upnp_useragent_patterns = [
     (r"(?P<belkin>F.{6}-.+?)(?=/[1-2]\.0 UPnP/1\.0)", "belkin"),
     (r"((vxworks/5\.5 UPnP/1\.0) (?P<tplink>.+)(/[1-9]\.0))", "tplink"),
@@ -128,7 +135,7 @@ roku_models = {
 }
 
 samsung_models = {
-    'G97NC':'55" Odyssey Ark G9'
+    'g97nc':'55" Odyssey Ark G9'
 }
 
 apple_models = {
@@ -217,6 +224,7 @@ apple_models = {
 "iphone12,1":"iPhone 11",
 "iphone12,3":"iPhone 11 Pro",
 "iphone12,5":"iPhone 11 Pro Max",
+"iphone13,4":"iPhone 12 Pro Max",
 "iphone1,2":"iPhone 3G",
 "iphone2,1":"iPhone 3GS",
 "iphone3,1":"iPhone 4",

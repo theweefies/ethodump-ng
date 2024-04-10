@@ -2,6 +2,11 @@
 
 import socket
 import re
+import ipaddress
+import os
+import threading
+import urllib.request
+from urllib.parse import urlparse, ParseResult
 
 ETH_P = b'\x08\x00'
 ETH_IPV6 = b'\x86\xDD'
@@ -10,12 +15,17 @@ ETH_P_ALL = 0x0003
 
 # Standard 80211 pcap global header (24 bytes)
 PCAP_GLOBAL_HEADER_ETHERNET = b'\xd4\xc3\xb2\xa1\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\x00\x00\x01\x00\x00\x00'
+MAGIC = 0xa1b2c3d4 # BE
+CIGAM = 0xd4c3b2a1 # LE
+
+GENERIC_UPNP_UA = 'Mozilla/5.0 (compatible; UPnP/1.1)'
 
 QUEUE_SIZE = 1000
 
 IPV4_ANY_ADDRESS = '0.0.0.0'
 IPV6_ANY_ADDRESS = '::'
-ETH_ANY_ADDRESS = 'ff:ff:ff:ff:ff:ff'
+ETH_BCAST_ADDRESS = 'ff:ff:ff:ff:ff:ff'
+ETH_ANY_ADDRESS = '00:00:00:00:00:00'
 
 clients = {}
 oui_table = {}
@@ -23,6 +33,8 @@ oui_file = "oui.csv"
 
 DARK_RED = '\x1b[31m'
 DEFAULT = '\x1b[0m'
+CURSOR_TO_TOP = '\x1b[H'
+CLEAR_SCREEN_CURSOR_TO_TOP = '\x1b[2J\x1b[H'
 
 def bytes_to_mac(bytes: bytes) -> str:
     """
@@ -54,6 +66,8 @@ def is_utf8_decodable(val: bytes) -> str | bool:
     """
     Function to attempt utf decoding.
     """
+    if isinstance(val, str):
+        return val
     if not val:
         return False
     try:
@@ -76,10 +90,22 @@ def clean_name(name: str) -> str:
 
     return cleaned
 
+def is_private_ipv4(ip_str: str) -> bool:
+    """
+    Function to test if an ip address is private.
+    """
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        if ip.is_private:
+            return True
+        return False
+    except ValueError:
+        return False
+
 class Flags:
     """
-    A class to manage global flags, signals, and output
-    control flags.
+    A class to manage global flags, signals, output
+    control flags, and thread locks.
     """
     def __init__(self):
         self.lock = None
@@ -114,11 +140,13 @@ class Client:
             self.communicants = {}
             self.connections = set()
             self.resource_urls = set()
+            self.dns_names = set()
             self.protocols = set()
             self.fingerprints = {"dhcp":None, "tcp":None}
             self.model_check_complete = False
             self.tls_ja3_classifications = set()
             self.tls_snis = set()
+            self.cred_pairs = set()
             self.count = 0
             get_manufacturer(self)
 
@@ -143,11 +171,13 @@ class Client:
             f"Ports: {', '.join(map(str, self.ports))}",
             f"Communicants: {', '.join(f'{k}: {v}' for k, v in self.communicants.items())}",
             f"Connections: {', '.join(self.connections)}",
-            f"Resource URLs: \n" + '\n'.join(self.resource_urls),
+            f"Resource URLs: {', '.join(self.resource_urls)}",
+            f"DNS Queries: {', '.join(self.dns_names)}",
             f"Protocols: {', '.join(self.protocols)}",
             ', '.join([f"{protocol.upper()} Fingerprint: {fingerprint if fingerprint else 'Not Available'}" for protocol, fingerprint in self.fingerprints.items()]),
             f"TLS JA3 Classifications: {'; '.join(self.tls_ja3_classifications)}",
             f"TLS SNIs: {', '.join(self.tls_snis)}",
+            f"Credential Pairs: {', '.join(self.cred_pairs)}",
             f"Count: {self.count}"
         ]
         # Join all the attribute strings with newlines for pretty printing
@@ -172,6 +202,30 @@ class Client:
             'COUNTS': self.count
         }
 
+def add_port(src_port: int, cur_client: Client) -> None:
+    """
+    Function to add a port number to the client class instance.
+    """
+    if src_port < 5500:
+        cur_client.ports.add(src_port)
+
+def add_ttl(ttl: int, src_port: int, dst_port, cur_client: Client) -> None:
+    """
+    Function to add a ttl for known trustworthy port traffic
+    Port/TTL relational analysis:
+    tshark -r test.dump -Y "ip.src == $IP_ADDRESS" -Tfields -e ip.ttl -e udp.srcport -e udp.dstport -e tcp.srcport -e tcp.dstport | sort -u
+
+    DHCP, MDNS, and SSDP seem to have unreliable TTL values that do not reflect the device type.
+    """
+    if dst_port == 1900 or src_port == 1900:
+        return
+    elif dst_port == 5353 or src_port == 5353:
+        return
+    elif dst_port == 68 or src_port == 68:
+        return
+    
+    cur_client.ttl = ttl
+
 def get_manufacturer(self: Client) -> None:
     """
     Function to get do OUI -> Manufacture resolution for the Client class.
@@ -182,3 +236,45 @@ def get_manufacturer(self: Client) -> None:
             self.manufacturer = oui_table[self.oui].replace('"','')
         else:
             self.manufacturer = 'Unknown'
+
+def check_make_path(dir: str, filename: str) -> str | None:
+    """
+    Function to check if a path exists; creates
+    it if it does not. Returns the full path if 
+    success, just the filename if creating the dir
+    raises an OSError.
+    """
+    cwd = os.getcwd()
+    new_full_path = os.path.join(cwd, dir)
+    if not os.path.exists(new_full_path):        
+        try:
+            os.makedirs(new_full_path, mode=0o777, exist_ok=True)
+        except OSError:
+            return filename
+
+    return os.path.join(new_full_path, filename)
+
+def grab_resource(urn: str, user_agent: str, parsed_urn: ParseResult, lock: threading.Lock):
+    """
+    Fetches a resource from the specified URN using a custom User-Agent and saves it to a file.
+
+    :param urn: The Uniform Resource Name (e.g., a URL) of the resource to fetch.
+    :param user_agent: The custom User-Agent string to use for the request.
+    :param filename: The name of the file where the resource will be saved.
+    """
+    with lock:
+        # Create a request object with the custom User-Agent
+        req = urllib.request.Request(urn, headers={'User-Agent': user_agent})
+
+        # Perform the request
+        with urllib.request.urlopen(req) as response:
+            # Read the response
+            content = response.read()
+            if content:
+                dir_name = parsed_urn.hostname
+                filename = parsed_urn.path.strip('/')
+                abs_path = check_make_path(dir_name, filename)
+                
+                # Save the content to a file
+                with open(abs_path, 'wb') as f:
+                    f.write(content)

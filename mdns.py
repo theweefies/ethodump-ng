@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Module to handle DNS and MDNS packets for ethodump-ng.
+Module to handle MDNS packets for ethodump-ng.
 """
 
 from dataclasses import dataclass
@@ -257,12 +257,12 @@ def process_mdns_packet(packet: MDNSPacket, cur_client: Client) -> None:
     hostnames = set()
     for question in packet.questions:
         hostname = process_record(question, 'question')
-        if hostname:
+        if hostname and len(hostname) > 3:
             hostnames.add(hostname)
     for section in (packet.answers, packet.additionals):
         for record in section:
             hostname = process_record(record, 'record')
-            if hostname:
+            if hostname and len(hostname) > 3:
                 hostnames.add(hostname)
 
     # Cleanup and update client hostnames
