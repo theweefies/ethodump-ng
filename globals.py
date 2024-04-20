@@ -7,6 +7,7 @@ import os
 import threading
 import urllib.request
 from urllib.parse import urlparse, ParseResult
+from urllib.error import URLError
 
 ETH_P = b'\x08\x00'
 ETH_IPV6 = b'\x86\xDD'
@@ -35,6 +36,10 @@ DARK_RED = '\x1b[31m'
 DEFAULT = '\x1b[0m'
 CURSOR_TO_TOP = '\x1b[H'
 CLEAR_SCREEN_CURSOR_TO_TOP = '\x1b[2J\x1b[H'
+
+# Mapping the keys [w,e,r,t,y,u,i,o,p] to numbers [10-18]
+key_mapping = {'w': 10, 'e': 11, 'r': 12, 't': 13, 'y': 14, 'u': 15, 'i': 16, 'o': 17, 'p': 18}
+
 
 def bytes_to_mac(bytes: bytes) -> str:
     """
@@ -263,18 +268,22 @@ def grab_resource(urn: str, user_agent: str, parsed_urn: ParseResult, lock: thre
     :param filename: The name of the file where the resource will be saved.
     """
     with lock:
-        # Create a request object with the custom User-Agent
-        req = urllib.request.Request(urn, headers={'User-Agent': user_agent})
+        try:
+            # Create a request object with the custom User-Agent
+            req = urllib.request.Request(urn, headers={'User-Agent': user_agent})
 
-        # Perform the request
-        with urllib.request.urlopen(req) as response:
-            # Read the response
-            content = response.read()
-            if content:
-                dir_name = parsed_urn.hostname
-                filename = parsed_urn.path.strip('/')
-                abs_path = check_make_path(dir_name, filename)
-                
-                # Save the content to a file
-                with open(abs_path, 'wb') as f:
-                    f.write(content)
+            # Perform the request
+            with urllib.request.urlopen(req) as response:
+                # Read the response
+                content = response.read()
+                if content:
+                    dir_name = parsed_urn.hostname
+                    filename = parsed_urn.path.rstrip('/').split('/')[-1]
+                    abs_path = check_make_path(dir_name, filename)
+                    
+                    # Save the content to a file
+                    with open(abs_path, 'wb') as f:
+                        f.write(content)
+        
+        except URLError:
+            pass

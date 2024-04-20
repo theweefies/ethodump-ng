@@ -56,7 +56,7 @@ def parse_ssdp_packet(payload: bytes, cur_client: Client, lock: threading.Lock, 
         location = ""
         server = ""
         for line in lines:
-            if 'LOCATION' in line:
+            if 'LOCATION:' in line:
                 location = line.split(': ')[1].strip()
                 if location:
                     if grab_resources and location not in cur_client.resource_urls:
@@ -64,7 +64,7 @@ def parse_ssdp_packet(payload: bytes, cur_client: Client, lock: threading.Lock, 
                             if parsed_urn:
                                 grab_resource(location, GENERIC_UPNP_UA, parsed_urn, lock)
                     cur_client.resource_urls.add(location)
-            if 'SERVER' in line:
+            if 'SERVER:' in line:
                 server = line.split(': ')[1].strip()
                 cur_client.user_agents.add(server)
                 ua_parse_result = parse_user_agent(server)

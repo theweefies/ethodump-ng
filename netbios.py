@@ -189,7 +189,7 @@ def parse_netbios_record(reader: BytesIO, cur_client: Client, record_type: int=N
     encoded_name = name.decode('ascii').strip()[:32]
     decoded_name, control_code = decode_netbios_name(encoded_name)
 
-    print('Decoded name: ', decoded_name, ' Control Code: ', control_code)
+    # print('Decoded name: ', decoded_name, ' Control Code: ', control_code)
     
     if record_type == QUERY:
         if control_code == SERVER_SERVICE or control_code == MASTER_BROWSER:

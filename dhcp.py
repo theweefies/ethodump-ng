@@ -62,6 +62,24 @@ def match_dhcp_fingerprint(packet: DHCPPacket, cur_client: Client) -> None:
             if parameter_request_list == fingerprint_value[1]:
                 cur_client.oses.add(fingerprint_value[0])
 
+def extract_fqdn_from_options(options: List[Tuple[int, bytes]], cur_client: Client) -> None:
+    """
+    Extract the Fully Qualified Domain Name (FQDN) from DHCPv6 options.
+    """
+    for option_code, option_data in options:
+        if option_code == 39:
+            # Option 39 found, process its data
+            if len(option_data) < 1:
+                return
+            
+            flags = option_data[0]
+            domain_name_data = option_data[1:]  # Skip the first byte which is flags
+            
+            # Decode the domain name. Assume it's encoded in standard ASCII or UTF-8 for simplicity.
+            domain_name = domain_name_data.decode('utf-8', 'ignore').strip()
+            if domain_name:
+                cur_client.hostnames.add(domain_name)
+
 def parse_dhcpv6_options(payload: bytes) -> List[Tuple[int, bytes]]:
     """
     Function to parse DHCPv6 options from the dhcp payload

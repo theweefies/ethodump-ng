@@ -25,7 +25,8 @@ from io import BytesIO
 from arp import parse_arp, process_arp
 from dns_ import parse_dns_packet, process_dns_packet
 from tls import parse_tls_payload, find_ja3_classification
-from dhcp import parse_dhcp_packet, parse_dhcpv6_packet, extract_dhcp_client_details, match_dhcp_fingerprint
+from dhcp import parse_dhcp_packet, parse_dhcpv6_packet, extract_dhcp_client_details, \
+    match_dhcp_fingerprint, extract_fqdn_from_options
 from icmp import parse_icmp, parse_icmpv6
 from igmp import parse_igmp
 from mdns import parse_mdns_packet, process_mdns_packet
@@ -34,6 +35,7 @@ from http_ import parse_http, detect_service_banner
 from tcp_udp import parse_eth_header, parse_ip_header, parse_tcp_header, parse_udp_header, parse_ipv6_header
 from netbios import parse_netbios_packet, parse_netbios_datagram
 
+from globals import key_mapping
 from globals import MAGIC, CIGAM
 from globals import DARK_RED, DEFAULT, CURSOR_TO_TOP, CLEAR_SCREEN_CURSOR_TO_TOP
 from globals import ETH_P, ARP_P, ETH_P_ALL, ETH_IPV6
@@ -130,7 +132,9 @@ def handle_key_press(key: str) -> None:
         print("ESC key pressed, exiting...                                             ")
         flags.exit_flag = True
         flags.q_pressed = True
-    elif key.isdigit():
+    elif key.isdigit() or key in key_mapping:
+        if key in key_mapping:
+            key = key_mapping.get(key)
         #with flags.lock:
         #sys.stdout.write('\x1b[2J\x1b[H')
         sys.stdout.write(CLEAR_SCREEN_CURSOR_TO_TOP)
@@ -383,7 +387,8 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                 
                 elif udp_header.src_port == 138 or udp_header.dst_port == 138:
                     nbns_packet = parse_netbios_datagram(payload)
-                    write_packet(p, "ethodebug.pcap")
+                    if not nbns_packet:
+                        write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('NETBIOS-UDP-138')
                     return
 
@@ -471,9 +476,12 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                 udp_header = parse_udp_header(reader)
                 payload = reader.read(udp_header.payload_length)
                 
-                if udp_header.src_port == 546:
+                if udp_header.src_port == 546 or udp_header.src_port == 547:
                     dhcpv6_packet = parse_dhcpv6_packet(payload)
-                    write_packet(p, "ethodebug.pcap")
+                    if not dhcpv6_packet:
+                        write_packet(p, "ethodebug.pcap")
+                    else:
+                        extract_fqdn_from_options(dhcpv6_packet.options, cur_client)
                     cur_client.protocols.add('DHCPv6')
                     return
 

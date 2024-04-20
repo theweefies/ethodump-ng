@@ -189,7 +189,11 @@ def parse_txt(record: MDNSTXT, cur_client: Client) -> None:
     connected_device_tags = [b"title", b"type", b"tech"]
 
     for entry in record.txt_data:
-        k, v = entry.split(b'=')
+        try:
+            k, v = entry.split(b'=')
+        except ValueError:
+            continue
+
         if k in connected_device_tags:
             cur_client.connections.add(v.decode('utf-8','ignore'))
         elif k in device_model_tags:
