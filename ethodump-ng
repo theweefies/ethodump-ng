@@ -34,6 +34,7 @@ from ssdp import parse_ssdp_packet
 from http_ import parse_http, detect_service_banner
 from tcp_udp import parse_eth_header, parse_ip_header, parse_tcp_header, parse_udp_header, parse_ipv6_header
 from netbios import parse_netbios_packet, parse_netbios_datagram
+from mndp import parse_mndp_packet, process_mndp_packet
 
 from globals import key_mapping
 from globals import MAGIC, CIGAM
@@ -403,8 +404,18 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                     mdns_packet = parse_mdns_packet(payload)
                     if not mdns_packet:
                         write_packet(p, "ethodebug.pcap")
-                    process_mdns_packet(mdns_packet, cur_client)
+                    else:
+                        process_mdns_packet(mdns_packet, cur_client)
                     cur_client.protocols.add('MDNS')
+                    return
+                
+                elif udp_header.dst_port == 5678 or udp_header.src_port == 5678:
+                    mndp_packet = parse_mndp_packet(payload)
+                    if not mndp_packet:
+                        write_packet(p, "ethodebug.pcap")
+                    else:
+                        process_mndp_packet(mndp_packet, cur_client)
+                    cur_client.protocols.add('MNDP')
                     return
 
             elif ip_header.protocol == 6: # TCP

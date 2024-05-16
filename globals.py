@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-
+"""
+Globals module for ethodump-ng
+"""
 import socket
 import re
 import ipaddress
