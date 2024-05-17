@@ -4,7 +4,6 @@ MNDP module for ethodump-ng
 """
 
 import struct
-import socket
 
 from io import BytesIO
 from dataclasses import dataclass

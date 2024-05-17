@@ -155,6 +155,7 @@ class Client:
             self.tls_snis = set()
             self.cred_pairs = set()
             self.count = 0
+            self.color = None
             get_manufacturer(self)
 
     def __str__(self):

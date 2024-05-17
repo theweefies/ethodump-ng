@@ -27,7 +27,7 @@ from dns_ import parse_dns_packet, process_dns_packet
 from tls import parse_tls_payload, find_ja3_classification
 from dhcp import parse_dhcp_packet, parse_dhcpv6_packet, extract_dhcp_client_details, \
     match_dhcp_fingerprint, extract_fqdn_from_options
-from icmp import parse_icmp, parse_icmpv6
+from icmp import parse_icmp, parse_icmpv6, process_icmpv6_packet
 from igmp import parse_igmp
 from mdns import parse_mdns_packet, process_mdns_packet
 from ssdp import parse_ssdp_packet
@@ -239,6 +239,8 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
                 # Format and print the row
                 if flags.key_code and client_dict["#"] == flags.key_code:
                     display_body += DARK_RED
+                elif client_data.color:
+                    display_body += client_data.color
                 formatted_row = header_format.format(*truncated_dict.values())
                 display_body += " " + formatted_row + "\n"
                 if flags.key_code and client_dict["#"] == flags.key_code:
@@ -256,6 +258,8 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
                         formatted_additional_row = header_format.format(*additional_row.values())
                         display_body += " " + formatted_additional_row + "\n"
                 if flags.key_code and client_dict["#"] == flags.key_code:
+                    display_body += DEFAULT
+                elif client_data.color:
                     display_body += DEFAULT
             display_body += "\n"
             sys.stdout.write(display_body)
@@ -515,6 +519,8 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                 icmpv6_packet = parse_icmpv6(reader)
                 if not icmpv6_packet:
                     write_packet(p, "ethodebug.pcap")
+                else:
+                    process_icmpv6_packet(icmpv6_packet, cur_client)
                 cur_client.protocols.add('ICMPv6')
                 return
             else:

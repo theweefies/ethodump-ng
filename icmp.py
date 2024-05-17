@@ -6,9 +6,11 @@ from io import BytesIO
 from typing import List
 from dataclasses import dataclass, field
 
+from globals import DARK_RED
 
 ECHO_PING_REQUEST = 128
 ROUTER_SOLICITATION = 133
+ROUTER_ADVERTISEMENT = 134
 NEIGHBOR_SOLICITATION = 135
 NEIGHBOR_ADVERTISEMENT = 136
 MULTICAST_LIST_REP_MSG_V2 = 143
@@ -61,6 +63,18 @@ class ICMPv6RouterSolicitation:
     options: List[MulticastOption] = field(default_factory=list)
 
 @dataclass
+class ICMPv6RouterAdvertisement:
+    type_: int
+    code: int
+    checksum: int
+    cur_hop_limit: int
+    flags: bytes
+    router_lifetime: int
+    reachable_time: int
+    retrans_timer: int
+    options: List[MulticastOption] = field(default_factory=list)
+
+@dataclass
 class ICMPv6EchoReq:
     type_: int
     code: int
@@ -75,6 +89,11 @@ class ICMPv6NeighborAdvertisement:
     checksum: int
     flags: int
     target: str
+
+def process_icmpv6_packet(packet, cur_client) -> None:
+    if packet.type_ == ROUTER_ADVERTISEMENT:
+        cur_client.ttl = packet.cur_hop_limit
+        cur_client.color = DARK_RED
 
 def parse_icmp(data: bytes) -> ICMP | None:
     """
@@ -133,6 +152,33 @@ def parse_icmpv6(reader: BytesIO) -> ICMPv6MulticastListenerReport | ICMPv6EchoR
 
         return ICMPv6NeighborSolicitation(type_, code, checksum, reserved, target_address, options) 
 
+    elif type_ == ROUTER_ADVERTISEMENT:
+        data = reader.read(2)
+        if len(data) < 2:
+            return None
+        cur_hop_limit = data[0]
+        flags = data[1]
+
+        data = reader.read(10)
+        if len(data) < 10:
+            return None
+        router_lifetime, reachable_time, retrans_timer = struct.unpack('!HII', data)
+
+        options = []
+        option_data = reader.read()
+        while len(option_data) > 0:
+            option_type = option_data[0]
+            if len(option_data) < 2:
+                break
+            option_len = (option_data[1] * 8) # each increment == 8 bytes
+            if len(option_data) < option_len:
+                break
+            option_val = option_data[2:option_len]
+            options.append(MulticastOption(option_type, option_val))
+            option_data = option_data[option_len:]
+
+        return ICMPv6RouterAdvertisement(type_, code, checksum, cur_hop_limit, flags, router_lifetime, reachable_time, retrans_timer, options)    
+    
     elif type_ == ROUTER_SOLICITATION:
         data = reader.read(4)
         if len(data) < 4:
