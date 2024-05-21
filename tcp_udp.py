@@ -8,14 +8,58 @@ module for ethodump-ng
 import struct
 from dataclasses import dataclass
 from io import BytesIO
-from globals import bytes_to_mac, bytes_to_ip, bytes_to_ipv6
+import sys
+import json
+import time
 
-END_OF_OPTION_LIST = 0
-NOP = 1
-MAX_SEGMENT_SIZE = 2
-WINDOW_SCALE = 3
-SACK_PERMITTED = 4
-TIMESTAMP = 8
+os_sample_count = {}
+
+if sys.version_info < (3,):
+    compat_ord = ord
+else:
+    def compat_ord(char):
+        return char
+
+from globals import bytes_to_mac, bytes_to_ip, bytes_to_ipv6, tcp_fp_dbase_list, tcp_fps
+
+# Options (opt_type) - http://www.iana.org/assignments/tcp-parameters
+TCP_OPT_EOL = 0  # end of option list
+TCP_OPT_NOP = 1  # no operation
+TCP_OPT_MSS = 2  # maximum segment size
+TCP_OPT_WSCALE = 3  # window scale factor, RFC 1072
+TCP_OPT_SACKOK = 4  # SACK permitted, RFC 2018
+TCP_OPT_SACK = 5  # SACK, RFC 2018
+TCP_OPT_ECHO = 6  # echo (obsolete), RFC 1072
+TCP_OPT_ECHOREPLY = 7  # echo reply (obsolete), RFC 1072
+TCP_OPT_TIMESTAMP = 8  # timestamp, RFC 1323
+TCP_OPT_POCONN = 9  # partial order conn, RFC 1693
+TCP_OPT_POSVC = 10  # partial order service, RFC 1693
+TCP_OPT_CC = 11  # connection count, RFC 1644
+TCP_OPT_CCNEW = 12  # CC.NEW, RFC 1644
+TCP_OPT_CCECHO = 13  # CC.ECHO, RFC 1644
+TCP_OPT_ALTSUM = 14  # alt checksum request, RFC 1146
+TCP_OPT_ALTSUMDATA = 15  # alt checksum data, RFC 1146
+TCP_OPT_SKEETER = 16  # Skeeter
+TCP_OPT_BUBBA = 17  # Bubba
+TCP_OPT_TRAILSUM = 18  # trailer checksum
+TCP_OPT_MD5 = 19  # MD5 signature, RFC 2385
+TCP_OPT_SCPS = 20  # SCPS capabilities
+TCP_OPT_SNACK = 21  # selective negative acks
+TCP_OPT_REC = 22  # record boundaries
+TCP_OPT_CORRUPT = 23  # corruption experienced
+TCP_OPT_SNAP = 24  # SNAP
+TCP_OPT_TCPCOMP = 26  # TCP compression filter
+TCP_OPT_MAX = 27
+# User Timeout Option (also, other known unauthorized use) [***][1]	[RFC5482]
+TCP_OPT_USRTO = 28
+TCP_OPT_AUTH = 29  # TCP Authentication Option (TCP-AO)	[RFC5925]
+TCP_OPT_MULTIPATH = 30  # Multipath TCP (MPTCP)
+TCP_OPT_FASTOPEN = 34  # TCP Fast Open Cookie	[RFC7413]
+TCP_OPY_ENCNEG = 69  # Encryption Negotiation (TCP-ENO)	[RFC8547]
+# RFC3692-style Experiment 1 (also improperly used for shipping products)
+TCP_OPT_EXP1 = 253
+# RFC3692-style Experiment 2 (also improperly used for shipping products)
+TCP_OPT_EXP2 = 254
 
 @dataclass
 class ETHHeader:
@@ -34,7 +78,7 @@ class IPHeader:
     frag_offset: int
     ttl: int
     protocol: int
-    checksum: bytes
+    checksum: int
     src_ip: str
     dst_ip: str
     options: bytes
@@ -58,7 +102,7 @@ class TCPHeader:
     header_length: int
     flags: int
     window_size: int
-    checksum: bytes
+    checksum: int
     urgent_pointer: int
     payload_length: int
     options:bytes
@@ -71,47 +115,161 @@ class UDPHeader:
     checksum: bytes
     payload_length: int
 
-def tcp_ip_fingerprint(ip_header: IPHeader, tcp_header: TCPHeader) -> None:
+def load_tcp_fp_dbase():
+    global tcp_fp_dbase_list
+    # load fingerprints into database
+    print('[+] Loading tcp fingerprint database...')
+    databaseFile = 'tcp_fp_db.json'
+    with open(databaseFile) as f:
+        tcp_fp_dbase_list = json.load(f)
+        for el in tcp_fp_dbase_list:
+            if el['os'] not in os_sample_count:
+                os_sample_count[el['os']] = 0
+            os_sample_count[el['os']] += 1
+
+def parse_opts(buf):
+    """Parse TCP option buffer into a list of (option, data) tuples."""
+    opts = []
+    while buf:
+        o = compat_ord(buf[0])
+        if o > TCP_OPT_NOP:
+            try:
+                # advance buffer at least 2 bytes = 1 type + 1 length
+                l = max(2, compat_ord(buf[1]))
+                d, buf = buf[2:l], buf[l:]
+            except (IndexError, ValueError):
+                opts.append(None)  # XXX
+                break
+        else:
+            # options 0 and 1 are not followed by length byte
+            d, buf = b'', buf[1:]
+        opts.append((o, d))
+    return opts
+
+def decode_tcp_options(opts):
+    """
+    Decodes TCP options into a readable string.
+
+    [(2, b'\x05\xb4'), (1, b''), (3, b'\x06'), (1, b''), (1, b''),
+      (8, b'3.S\xa8\x00\x00\x00\x00'), (4, b''), (0, b''), (0, b'')]
+    """
+    str_opts = ''
+    mss = 0
+    timestamp_echo_reply = ''
+    timestamp = ''
+    window_scaling = None
+
+    for opt in opts:
+        option_type, option_value = opt
+        if option_type == TCP_OPT_EOL:  # End of options list
+            str_opts = str_opts + 'E,'
+        elif option_type == TCP_OPT_NOP:  # No operation
+            str_opts = str_opts + 'N,'
+        elif option_type == TCP_OPT_MSS:  # Maximum segment size
+            try:
+                mss = struct.unpack('!h', option_value)[0]
+                str_opts = str_opts + 'M' + str(mss) + ','
+            except Exception as e:
+                pass
+        elif option_type == TCP_OPT_WSCALE:  # Window scaling
+            window_scaling = struct.unpack('!b', option_value)[0]
+            str_opts = str_opts + 'W' + str(window_scaling) + ','
+        elif option_type == TCP_OPT_SACKOK:  # Selective Acknowledgement permitted
+            str_opts = str_opts + 'S,'
+        elif option_type == TCP_OPT_SACK:  # Selective ACKnowledgement (SACK)
+            str_opts = str_opts + 'K,'
+        elif option_type == TCP_OPT_ECHO:
+            str_opts = str_opts + 'J,'
+        elif option_type == TCP_OPT_ECHOREPLY:
+            str_opts = str_opts + 'F,'
+        elif option_type == TCP_OPT_TIMESTAMP:
+            try:
+                str_opts = str_opts + 'T,'
+                timestamp = struct.unpack('!I', option_value[0:4])[0]
+                timestamp_echo_reply = struct.unpack(
+                    '!I', option_value[4:8])[0]
+            except Exception as e:
+                pass
+        elif option_type == TCP_OPT_POCONN:
+            str_opts = str_opts + 'P,'
+        elif option_type == TCP_OPT_POSVC:
+            str_opts = str_opts + 'R,'
+        else:  # unknown TCP option. Just store the opt_type
+            str_opts = str_opts + 'U' + str(option_type) + ','
+
+    return (str_opts, timestamp, timestamp_echo_reply, mss, window_scaling)
+
+def score_fp(fp):
+    """The most recent version of TCP/IP fingerprint scoring algorithm.
+
+    Args:
+        fp (dict): The fingerprint to score
+
+    Returns:
+        avg_os_score: average score of this fingerprint for all OS
+    """
+    global tcp_fp_dbase_list
+
+    if not tcp_fp_dbase_list:
+        return None
+    
+    # Hardcoded for performance reasons
+    os_scores = {
+        'Android': 0,
+        'Windows': 0,
+        'Mac OS': 0,
+        'iOS': 0,
+        'Linux': 0
+    }
+    for entry in tcp_fp_dbase_list:
+        score = 0
+        os_name = entry['os']
+        if entry['ip_id'] == fp['ip_id']:
+            score += 1.5
+        if entry['ip_tos'] == fp['ip_tos']:
+            score += 0.25
+        if entry['ip_total_length'] == fp['ip_total_length']:
+            score += 2.5
+        if entry['ip_ttl'] == fp['ip_ttl']:
+            score += 2
+        if entry['tcp_off'] == fp['tcp_off']:
+            score += 2.5
+        if entry['tcp_timestamp_echo_reply'] == fp['tcp_timestamp_echo_reply']:
+            score += 2
+        if entry['tcp_window_scaling'] == fp['tcp_window_scaling']:
+            score += 2
+        if entry['tcp_window_size'] == fp['tcp_window_size']:
+            score += 2
+        if entry['tcp_flags'] == fp['tcp_flags']:
+            score += 0.25
+        if entry['tcp_mss'] == fp['tcp_mss']:
+            score += 1.5
+        if entry['tcp_options'] == fp['tcp_options']:
+            score += 4
+        elif entry['tcp_options_ordered'] == fp['tcp_options_ordered']:
+            score += 2.5
+        os_scores[os_name] += score
+
+    avg_os_score = {}
+    for os_name in os_scores:
+        avg_os_score[os_name] = round(
+            os_scores[os_name] / os_sample_count[os_name], 2)
+
+    return avg_os_score
+
+def tcp_ip_fingerprint(pkt, ip_header: IPHeader, tcp_header: TCPHeader, cur_client) -> None:
     """
     Function to prepare tcp/ip fingerprint from SYN frame
     """
-    ttl = ip_header.ttl
-    frame_size = ip_header.total_length
-    ip_flags = ip_header.flags
-    win_size = tcp_header.window_size
-    
-    mss = None
-    window_scale = None
-    sack_permitted = False
-    timestamp_val = timestamp_reply = None
-    nops = 0
-
-    if tcp_header.options:
-        i = 0
-        while i < len(tcp_header.options):
-            kind = tcp_header.options[i]
-            if kind == END_OF_OPTION_LIST:
-                break
-            elif kind == NOP:
-                nops += 1
-                i += 1
-                continue
-            else:
-                length = tcp_header.options[i+1]
-                if kind == MAX_SEGMENT_SIZE:
-                    mss = struct.unpack('!H', tcp_header.options[i+2:i+length])[0]
-                elif kind == WINDOW_SCALE:
-                    window_scale = tcp_header.options[i+2]
-                elif kind == SACK_PERMITTED:
-                    sack_permitted = True
-                elif kind == TIMESTAMP:
-                    timestamp_val, timestamp_reply = struct.unpack('!II', tcp_header.options[i+2:i+length])
-            i += length
-    
+    epoch_time = str(time.time())
+    seconds, microseconds = int(epoch_time.split(".")[0]), int(epoch_time.split(".")[1])
     flags = tcp_header.flags
+    ip_flags = ip_header.flags
+
     # IP Header flag parsing
-    dnf = (ip_flags & 0x02) >> 1
-    mfs = ip_flags & 0x01
+    rf = (ip_flags & 0x80) >> 7
+    dnf = (ip_flags & 0x40) >> 6
+    mfs = (ip_flags & 0x20) >> 5
     # TCP Header flag parsing
     res = (flags & 0x0e00) >> 9
     nonce = (flags & 0x0100) >> 8
@@ -123,6 +281,97 @@ def tcp_ip_fingerprint(ip_header: IPHeader, tcp_header: TCPHeader) -> None:
     rst = (flags & 0x0004) >> 2
     syn = (flags & 0x0002) >> 1
     fin = flags & 0x0001
+
+    if syn and not ack:
+
+        if tcp_header.options:
+            tcp_options = parse_opts(tcp_header.options)
+
+            [str_opts, timestamp, timestamp_echo_reply, mss,
+                window_scaling] = decode_tcp_options(tcp_options)
+        
+        cap_len = len(pkt)
+        dst_ip = ip_header.dst_ip
+        dst_port = tcp_header.dst_port
+        header_len = None
+        ip_checksum = ip_header.checksum
+        ip_df = dnf
+        ip_hdr_len = ip_header.header_length // 4
+        ip_id = 0 if ip_header.identification == 0 else 1
+        ip_mf = mfs
+        ip_nxt = None # IPv6
+        ip_off = ip_header.frag_offset
+        ip_plen = None # IPv6
+        ip_protocol = ip_header.protocol
+        ip_rf = rf
+        ip_tos = ip_header.differentiated_service_field
+        ip_total_length = ip_header.total_length
+        ip_ttl = ip_header.ttl
+        ip_version = ip_header.version
+        src_ip = ip_header.src_ip
+        src_port = tcp_header.src_port
+        tcp_ack = ack
+        tcp_checksum = tcp_header.checksum
+        tcp_flags = flags
+        tcp_header_len = tcp_header.header_length
+        tcp_mss = mss
+        tcp_off = None
+        tcp_options = str_opts
+        tcp_options_ordered = ''.join(
+                    [e[0] for e in str_opts.split(',') if e])
+        tcp_seq = tcp_header.sequence_num
+        tcp_timestamp = 0 if not timestamp else 1
+        tcp_timestamp_echo_reply = 0 if not timestamp_echo_reply else 1
+        tcp_urp = tcp_header.urgent_pointer
+        tcp_window_scaling = window_scaling
+        tcp_window_size = tcp_header.window_size
+        
+        tcp_fp = {
+        'cap_len':cap_len,
+        'dst_ip':dst_ip, 
+        'dst_port':dst_port, 
+        'header_len':header_len, 
+        'ip_checksum':ip_checksum,
+        'ip_df':ip_df, 
+        'ip_hd_len':ip_hdr_len, 
+        'ip_id':ip_id,
+        'ip_mf':ip_mf, 
+        'ip_nxt':ip_nxt,
+        'ip_off':ip_off,
+        'ip_len':ip_plen,
+        'ip_protocol':ip_protocol,
+        'ip_rf':ip_rf,
+        'ip_tos':ip_tos,
+        'ip_total_length':ip_total_length,
+        'ip_ttl':ip_ttl,
+        'ip_version':ip_version,
+        'src_ip':src_ip,
+        'src_port':src_port,
+        'tcp_ack':tcp_ack,
+        'tcp_checksum':tcp_checksum,
+        'tcp_flags':tcp_flags,
+        'tcp_header_len':tcp_header_len,
+        'tcp_mss':tcp_mss,
+        'tcp_off':tcp_off,
+        'tcp_options':tcp_options,
+        'tcp_options_ordered':tcp_options_ordered,
+        'tcp_seq':tcp_seq,
+        'tcp_timestamp':tcp_timestamp,
+        'tcp_timestamp_echo_reply':tcp_timestamp_echo_reply,
+        'tcp_urp':tcp_urp,
+        'tcp_window_scaling':tcp_window_scaling,
+        'tcp_window_size':tcp_window_size,
+        'ts':[seconds,microseconds]
+        }
+        
+        if not tcp_fps.get(src_ip, None):
+            tcp_fps[src_ip] = []
+        cur_fp = tcp_fps.get(src_ip, None)
+        cur_fp.append(tcp_fp)
+
+        os_score = score_fp(tcp_fp)
+        if os_score:
+            cur_client.fingerprints["tcp"] = os_score
 
 def parse_eth_header(reader: BytesIO) -> ETHHeader | None:
     """
@@ -150,11 +399,11 @@ def parse_ip_header(reader: BytesIO) -> IPHeader | None:
     dsf = data[1]
     total_length = struct.unpack('!H', data[2:4])[0]
     identification = struct.unpack('!H',data[4:6])[0]
-    flags = data[6] >> 5 # stores the 3x MSBs
+    flags = data[6]
     frag_offset = struct.unpack('!H', data[6:8])[0] & 0x1FFF
     ttl = data[8]
     proto = data[9]
-    checksum = data[10:12]
+    checksum = struct.unpack('!H',data[10:12])[0]
     src_ip = bytes_to_ip(data[12:16])
     dst_ip = bytes_to_ip(data[16:20])
     options = b''
@@ -206,7 +455,7 @@ def parse_tcp_header(reader: BytesIO) -> TCPHeader | None:
     flags = struct.unpack('!H', data[12:14])[0] & 0x0FFF
     syn = (flags & 0x0002) >> 1
     window_size = struct.unpack('!H', data[14:16])[0]
-    checksum = data[16:18]
+    checksum = struct.unpack('!H',data[16:18])[0]
     urgent_pointer = struct.unpack('!H', data[18:20])[0]
     if header_length > 20:
         data = reader.read(header_length - 20)

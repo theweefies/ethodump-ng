@@ -152,7 +152,7 @@ def parse_http(payload: bytes | str, cur_client, lock: threading.Lock, resource_
     if json_object:
         file = check_make_path(cur_client.ip_address, f'json_object_{short_format_date_time}.json')
         with open(file, 'wb') as json_fh:
-            json_fh.write(json_object)
+            json_fh.write(json_object.encode())
     
     if form_encoded:
         file = check_make_path(cur_client.ip_address, f'form_encoded_{short_format_date_time}.encwww')

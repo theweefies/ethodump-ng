@@ -19,6 +19,7 @@ import termios
 import argparse
 import netifaces
 import threading
+import subprocess
 
 from io import BytesIO
 
@@ -29,10 +30,10 @@ from dhcp import parse_dhcp_packet, parse_dhcpv6_packet, extract_dhcp_client_det
     match_dhcp_fingerprint, extract_fqdn_from_options
 from icmp import parse_icmp, parse_icmpv6, process_icmpv6_packet
 from igmp import parse_igmp
-from mdns import parse_mdns_packet, process_mdns_packet
+from mdns import parse_mdns_packet, process_mdns_packet, prepare_redirect
 from ssdp import parse_ssdp_packet
 from http_ import parse_http, detect_service_banner
-from tcp_udp import parse_eth_header, parse_ip_header, parse_tcp_header, parse_udp_header, parse_ipv6_header
+from tcp_udp import parse_eth_header, parse_ip_header, parse_tcp_header, parse_udp_header, parse_ipv6_header, tcp_ip_fingerprint, load_tcp_fp_dbase
 from netbios import parse_netbios_packet, parse_netbios_datagram
 from mndp import parse_mndp_packet, process_mndp_packet
 
@@ -44,7 +45,8 @@ from globals import ETH_BCAST_ADDRESS, IPV6_ANY_ADDRESS
 from globals import PCAP_GLOBAL_HEADER_ETHERNET, QUEUE_SIZE
 from globals import Client, Flags
 from globals import oui_table, oui_file, clients
-from globals import is_private_ipv4, add_port, add_ttl
+from globals import is_private_ipv4, add_port, add_ttl, tcp_fp_dbase_list
+from globals import mdns_queue
 
 class interface:
     """
@@ -327,10 +329,12 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
     if args.read_pcap:
         GRAB_RESOURCES = False
 
+    MDNS_REDIRECT_IP = args.mdns_redirect
+
     reader = BytesIO(p)
     eth_header = parse_eth_header(reader)
 
-    if not is_self_L2(eth_header.src_mac, own_iface.mac):
+    if True: #not is_self_L2(eth_header.src_mac, own_iface.mac):
         if eth_header.src_mac not in clients:
             cur_client = clients[eth_header.src_mac] = Client(eth_header.src_mac, flags.client_count)
             flags.client_count += 1
@@ -363,8 +367,8 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
             if ip_header.protocol == 17: # UDP
                 udp_header = parse_udp_header(reader)
                 payload = reader.read(udp_header.payload_length)
-                add_port(udp_header.src_port, cur_client)
-                add_ttl(ip_header.ttl, udp_header.src_port, udp_header.dst_port, cur_client)
+                add_port(udp_header.dst_port, cur_client)
+                add_ttl(ip_header.ttl, cur_client)
 
                 if udp_header.src_port == 53 or udp_header.dst_port == 53: # DNS
                     dns_packet = parse_dns_packet(payload)
@@ -410,6 +414,8 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                         write_packet(p, "ethodebug.pcap")
                     else:
                         process_mdns_packet(mdns_packet, cur_client)
+                        if ip_header.src_ip == MDNS_REDIRECT_IP:
+                            mdns_queue.put(mdns_packet)
                     cur_client.protocols.add('MDNS')
                     return
                 
@@ -426,8 +432,10 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                 tcp_header = parse_tcp_header(reader)
                 tcp_header.payload_length = ip_header.total_length - ip_header.header_length - tcp_header.header_length
                 payload = reader.read(tcp_header.payload_length)
-                add_port(tcp_header.src_port, cur_client)
-                add_ttl(ip_header.ttl, tcp_header.src_port, tcp_header.dst_port, cur_client)
+                add_port(tcp_header.dst_port, cur_client)
+                add_ttl(ip_header.ttl, cur_client)
+
+                tcp_ip_fingerprint(p, ip_header, tcp_header, cur_client)
 
                 detect_service_banner(payload, cur_client)
 
@@ -676,6 +684,28 @@ def write_header(filename: str) -> None:
     f_out.write(PCAP_GLOBAL_HEADER_ETHERNET)
     f_out.close()
 
+def mdns_redirect(target_ip: str, interface: str, hostname: str) -> None:
+    """
+    Function to handle mnds interactions for redirection
+    """
+    try:
+        # Create a UDP socket
+        send_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0x0800)
+        send_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, bytes(interface, 'utf-8'))
+        send_socket.bind((interface, 0))
+    except OSError as e:
+        print(f'[!] ERROR: Problem creating socket on {interface} for sending mdns traffic.')
+        return
+
+    while not flags.exit_flag:
+        try:
+            pkt = mdns_queue.get(timeout=1)
+            prepare_redirect(target_ip, iface.mac, iface.ip, send_socket, pkt, hostname)
+            mdns_queue.task_done()
+        except queue.Empty:
+            continue
+
+
 if __name__ == "__main__":
 
     ed_argparse = argparse.ArgumentParser(prog='ethodump-ng', description='An Ethernet packet sniffing tool.')
@@ -685,6 +715,8 @@ if __name__ == "__main__":
     ed_argparse.add_argument('-s', '--save', action='store', type=str, help='Pass the file name to save detailed results.', required=False)
     ed_argparse.add_argument('-r', '--resource-grab', action='store_true', help='Enable resource grabbing (Performs GET against resource urns).', required=False)
     ed_argparse.add_argument('-p', '--read-pcap', action='store', type=str, help='Pass a pcap file to read', required=False)
+    ed_argparse.add_argument('-m', '--mdns-redirect', action='store', type=str, help='Enter the target IP for mdns redirection.', required=False, default=None)
+    ed_argparse.add_argument('-n', '--hostname', action='store', type=str, help='Pass the hostname to send in response packets. Default = system hostname', required=False, default=subprocess.getoutput('hostname'))
     ed_argparse.add_argument('-d', '--debug', action='store_true', help='Set the script debug to verbose.', required=False, default=False)
     ed_argparse.add_argument('-v', '--version', action='version')
 
@@ -703,6 +735,8 @@ if __name__ == "__main__":
     listener_thread = None
     display_thread = None
     keypress_thread = None
+
+    load_tcp_fp_dbase()
 
     if not args.interface and not args.read_pcap:
         print('ERROR: either --interface or --read must be specified.')
@@ -771,6 +805,11 @@ if __name__ == "__main__":
     keypress_thread = threading.Thread(target=key_press_listener, args=(handle_key_press,))
     keypress_thread.daemon = True
     keypress_thread.start()
+
+    if args.mdns_redirect and not args.read_pcap:
+        mdns_redirect_thread = threading.Thread(target=mdns_redirect, args=(args.mdns_redirect,interface_name,args.hostname,))
+        mdns_redirect_thread.daemon = True
+        mdns_redirect_thread.start()
 
     try:
         while not flags.exit_flag:

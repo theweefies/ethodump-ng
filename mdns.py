@@ -9,8 +9,12 @@ from io import BytesIO
 import socket
 import struct
 import re
+import random
+import hashlib
+import time
+import uuid
 
-from globals import clean_name, Client
+from globals import clean_name, Client, mdns_queue, mac_address_to_bytes, ETH_P
 from models import samsung_models, apple_models, hp_models, roku_models
 
 MDNS_PTR = 12
@@ -21,6 +25,11 @@ MDNS_AAAA = 28
 MDNS_NSEC = 47
 MDNS_ANY = 255
 MDNS_OPT = 41
+
+MULTICAST_IP = '224.0.0.251'
+MULTICAST_MAC = '01:00:5e:00:00:fb'
+UDP_HEADER_LEN = 8
+IP_HEADER_LEN = 20
 
 @dataclass
 class MDNSHeader:
@@ -475,6 +484,302 @@ def parse_authority(reader: BytesIO) -> MDNSAuthoratativeNameservers | None:
 
     return MDNSAuthoratativeNameservers(name, type_, class_, ttl, data_len, primary_nameserver, \
                         responsible_authority, serial_number, refresh_interval, retry_interval, expire_limit, min_ttl)
+
+def ip_checksum(ip_header):
+    assert len(ip_header) % 2 == 0, "Header length must be even."
+
+    checksum = 0
+    for i in range(0, len(ip_header), 2):
+        word = (ip_header[i] << 8) + ip_header[i+1]
+        checksum += word
+        checksum = (checksum & 0xffff) + (checksum >> 16)
+
+    return ~checksum & 0xffff
+
+def udp_checksum(src_addr, dest_addr, udp_length, udp_header, udp_data):
+    """
+    Calculate the UDP checksum including the pseudo-header.
+    """
+    # Pseudo-header fields
+    protocol = 17  # UDP protocol number
+    pseudo_header = struct.pack('!4s4sBBH', 
+                                socket.inet_aton(src_addr), 
+                                socket.inet_aton(dest_addr), 
+                                0, 
+                                protocol, 
+                                udp_length)
+
+    # Calculate the checksum including pseudo-header
+    checksum = 0
+    # Process the pseudo-header
+    for i in range(0, len(pseudo_header), 2):
+        word = (pseudo_header[i] << 8) + pseudo_header[i + 1]
+        checksum += word
+        checksum = (checksum & 0xffff) + (checksum >> 16)
+
+    # Process the UDP header
+    for i in range(0, len(udp_header), 2):
+        word = (udp_header[i] << 8) + udp_header[i + 1]
+        checksum += word
+        checksum = (checksum & 0xffff) + (checksum >> 16)
+
+    # Process the data
+    if len(udp_data) % 2:  # if odd length, pad with a zero byte
+        udp_data += b'\x00'
+    for i in range(0, len(udp_data), 2):
+        word = (udp_data[i] << 8) + udp_data[i + 1]
+        checksum += word
+        checksum = (checksum & 0xffff) + (checksum >> 16)
+
+    return ~checksum & 0xffff
+
+def create_udp_header(src_port, dst_port, length, checksum):
+    
+    return struct.pack("!HHHH", src_port, dst_port, length, checksum)
+
+def encode_mdns_name(name):
+    """Encode a domain name according to mDNS requirements."""
+    parts = name.split('.')
+    encoded_parts = [len(part).to_bytes(1, 'big') + part.encode() for part in parts]
+    return b''.join(encoded_parts) + b'\x00'
+
+def generate_hex_string(length):
+    hex_digits = "0123456789abcdef"
+    random.seed(time.time())
+    
+    hex_string = ''.join(random.choice(hex_digits) for _ in range(length))
+    
+    return hex_string
+
+
+def send_spotify_response(service_name, src_mac, src_ip, hostname, skt: socket.socket):
+    
+    # mdns payload
+    transaction_id = b'\x00\x00'
+    flags = b'\x84\x00'
+    questions = b'\x00\x00'
+    answer_rrs = b'\x00\x02'
+    authority_rrs = b'\x00\x00'
+    additional_rrs = b'\x00\x08'
+
+    airplay_target = "_airplay._tcp.local"
+    full_airplay_name_field = encode_mdns_name(hostname + '.' + airplay_target)
+    full_spotify_name_field = encode_mdns_name(hostname + '.' + service_name)
+
+    ################ SPOTIFY PTR RECORD ##################
+    name_field = encode_mdns_name(service_name)
+
+    type_ = struct.pack('!H', MDNS_PTR)
+    class_ = b'\x80\x01'
+    time_to_live = struct.pack('!I', 4500)
+    
+    #sha1_hash = hashlib.sha1(src_mac.encode())
+    #sha1_hex = sha1_hash.hexdigest()
+    domain_name_text = hostname + '.' + service_name
+    encoded_domain_name = encode_mdns_name(domain_name_text)
+    data_len = len(encoded_domain_name) + 2
+    domain_name = encoded_domain_name + b'\xc0\x0c'
+
+    spotify_ptr_record = name_field + type_ + class_ + time_to_live + int(data_len).to_bytes(2, 'big') + domain_name
+
+    ################ AIRPLAY PTR RECORD ##################
+    name_field = encode_mdns_name(airplay_target)
+    
+    domain_name_text = hostname + '.' + airplay_target
+    encoded_domain_name = encode_mdns_name(domain_name_text)
+    data_len = len(encoded_domain_name) + 2
+    domain_name = encoded_domain_name + b'\xc0\x0c'
+
+    airplay_ptr_record = name_field + type_ + class_ + time_to_live + int(data_len).to_bytes(2, 'big') + domain_name
+
+    ################## MDNS TXT RECORD ###################
+    type_ = struct.pack('!H', MDNS_TXT)
+    class_ = b'\x80\x01'
+    time_to_live = struct.pack('!I', 4500)
+
+    device_id = src_mac.upper()
+    psi_mac = src_mac.replace(':','').upper()
+    txt_acl = "acl=0".encode()
+    txt_acl_len = struct.pack('!B',len(txt_acl))
+    txt_deviceid = f"deviceid={device_id}".encode()
+    txt_deviceid_len = struct.pack('!B',len(txt_deviceid))
+    txt_features = "features=0x7F8AD0,0x38BCF46".encode()
+    txt_features_len = struct.pack('!B',len(txt_features))
+    txt_fex = "fex=0Ip/AEbPiwNACA".encode()
+    txt_fex_len = struct.pack('!B',len(txt_fex))
+    txt_rsf = "rsf=0x3".encode()
+    txt_rsf_len = struct.pack('!B',len(txt_rsf))
+    txt_fv = "fv=p20.10.00.4102".encode()
+    txt_fv_len = struct.pack('!B',len(txt_fv))
+    txt_at = "at=0x1".encode()
+    txt_at_len = struct.pack('!B',len(txt_at))
+    txt_flags = "flags=0x244".encode()
+    txt_flags_len = struct.pack('!B',len(txt_flags))
+    txt_model = "model=appletv6,2".encode()
+    txt_model_len = struct.pack('!B',len(txt_model))
+    txt_integrator = "integrator=sony_tv".encode()
+    txt_integrator_len = struct.pack('!B',len(txt_integrator))
+    txt_manufacturer = "manufacturer=Sony".encode()
+    txt_manufacturer_len = struct.pack('!B',len(txt_manufacturer))
+    txt_serial_number = f"serialNumber={str(uuid.uuid4())}".encode()
+    txt_serial_number_len = struct.pack('!B',len(txt_serial_number))
+    txt_protovers = "protovers=1.1".encode()
+    txt_protovers_len = struct.pack('!B',len(txt_protovers))
+    txt_srcvers = "srcvers=377.40.00".encode()
+    txt_srcvers_len = struct.pack('!B',len(txt_srcvers))
+    txt_pi = f"pi={device_id}".encode()
+    txt_pi_len = struct.pack('!B',len(txt_pi))
+    txt_psi = f"psi=00000000-0000-0000-0000-{psi_mac}".encode()
+    txt_psi_len = struct.pack('!B',len(txt_psi))
+    txt_gid = f"gid=00000000-0000-0000-0000-{psi_mac}".encode()
+    txt_gid_len = struct.pack('!B',len(txt_gid))
+    txt_gcgl = "gcgl=0".encode()
+    txt_gcgl_len = struct.pack('!B',len(txt_gcgl))
+    txt_pk = f"pk={generate_hex_string(64)}".encode()
+    print(txt_pk)
+    txt_pk_len = struct.pack('!B',len(txt_pk))
+
+    txt_payload = txt_acl_len + txt_acl + txt_deviceid_len + txt_deviceid + txt_features_len + txt_features + txt_fex_len + txt_fex +\
+        txt_rsf_len + txt_rsf + txt_fv_len + txt_fv + txt_at_len + txt_at + txt_flags_len + txt_flags + txt_model_len + txt_model +\
+        txt_integrator_len + txt_integrator + txt_manufacturer_len + txt_manufacturer + txt_serial_number_len + txt_serial_number +\
+        txt_protovers_len + txt_protovers + txt_srcvers_len + txt_srcvers + txt_pi_len + txt_pi + txt_psi_len + txt_psi + txt_gid_len +\
+        txt_gid + txt_gcgl_len + txt_gcgl + txt_pk_len + txt_pk
+
+    txt_payload_len = struct.pack('!H', len(txt_payload))
+    txt_record = full_airplay_name_field + type_ + class_ + time_to_live + txt_payload_len + txt_payload
+
+    ################## MDNS SRV RECORD ###################
+    type_ = struct.pack('!H', MDNS_SRV)
+    class_ = b'\x80\x01'
+    time_to_live = struct.pack('!I', 120)
+
+    priority = struct.pack('!H', 0)
+    weight = struct.pack('!H', 0)
+    port = struct.pack('!H', 7000)
+    target = encode_mdns_name(hostname + '.' + 'local')
+    srv_data = priority + weight + port + target
+    srv_data_len = struct.pack('!H', len(srv_data))
+
+    srv_record = full_airplay_name_field + type_ + class_ + time_to_live + srv_data_len + srv_data
+
+    ################## MDNS TXT RECORD ###################
+    type_ = struct.pack('!H', MDNS_TXT)
+    class_ = b'\x80\x01'
+    time_to_live = struct.pack('!I', 4500)
+
+    txt_cpath = "CPath=/zc".encode()
+    txt_cpath_len = struct.pack('!B',len(txt_cpath))
+
+    txt_payload = txt_cpath_len + txt_cpath
+    txt_payload_len = struct.pack('!H', len(txt_payload))
+    txt_record_spotify = full_spotify_name_field + type_ + class_ + time_to_live + txt_payload_len + txt_payload
+
+    ################## MDNS SRV RECORD ###################
+    type_ = struct.pack('!H', MDNS_SRV)
+    class_ = b'\x80\x01'
+    time_to_live = struct.pack('!I', 120)
+
+    priority = struct.pack('!H', 0)
+    weight = struct.pack('!H', 0)
+    port = struct.pack('!H', 7000)
+    target = encode_mdns_name(hostname + '.' + 'local')
+    srv_data = priority + weight + port + target
+    srv_data_len = struct.pack('!H', len(srv_data))
+
+    srv_record_spotify = full_spotify_name_field + type_ + class_ + time_to_live + srv_data_len + srv_data
+
+    #################### MDNS A RECORD ####################
+    domain_name = encode_mdns_name(hostname + '.' + 'local')
+    type_ = struct.pack('!H', MDNS_A)
+    class_ = b'\x80\x01'
+    time_to_live = struct.pack('!I', 120)
+
+    ip_bytes = socket.inet_aton(src_ip)
+    a_data_len = struct.pack('!H', len(ip_bytes))
+
+    a_record = domain_name + type_ + class_ + time_to_live + a_data_len + ip_bytes
+
+    ################ MDNS NSEC RECORD ####################
+    type_ = struct.pack('!H', MDNS_NSEC)
+    class_ = b'\x80\x01'
+    time_to_live = struct.pack('!I', 4500)
+
+    nsec_bitmap = b'\x00\x05\x00\x00\x80\x00\x40'
+    nsec_data_len = struct.pack('!H',len(full_airplay_name_field) + len(nsec_bitmap))
+
+    nsec_srv_txt_airplay_record = full_airplay_name_field + type_ + class_ + time_to_live + nsec_data_len + full_airplay_name_field + nsec_bitmap
+
+    ################ MDNS NSEC RECORD ####################
+    type_ = struct.pack('!H', MDNS_NSEC)
+    class_ = b'\x80\x01'
+    time_to_live = struct.pack('!I', 4500)
+
+    nsec_bitmap = b'\x00\x05\x00\x00\x80\x00\x40'
+    nsec_data_len = struct.pack('!H',len(full_spotify_name_field) + len(nsec_bitmap))
+
+    nsec_srv_txt_spotify_record = full_spotify_name_field + type_ + class_ + time_to_live + nsec_data_len + full_spotify_name_field + nsec_bitmap
+
+    ################ MDNS NSEC RECORD ####################
+    type_ = struct.pack('!H', MDNS_NSEC)
+    class_ = b'\x80\x01'
+    time_to_live = struct.pack('!I', 120)
+
+    nsec_bitmap = b'\x00\x04\x40\x00\x00\x00'
+    nsec_data_len = struct.pack('!H',len(domain_name) + len(nsec_bitmap))
+
+    nsec_a_record = domain_name + type_ + class_ + time_to_live + nsec_data_len + domain_name + nsec_bitmap
+
+    ################ BUILD MDNS PAYLOAD ##################
+    mdns_payload = transaction_id + flags + questions + answer_rrs + authority_rrs + additional_rrs + spotify_ptr_record + airplay_ptr_record +\
+        txt_record + srv_record + txt_record_spotify + srv_record_spotify + a_record + nsec_srv_txt_airplay_record + nsec_srv_txt_spotify_record + nsec_a_record
+    mdns_len = len(mdns_payload)
+
+    # ethernet header
+    multicast_mac = mac_address_to_bytes(MULTICAST_MAC)
+    src_mac = mac_address_to_bytes(src_mac)
+    eth_header = struct.pack("!6s6sH", multicast_mac, src_mac, 0x0800)
+
+    # ip header
+    multicast_ip = MULTICAST_IP
+    ver_header_len = 69 # version 4 + header length 20 (5)
+    dsf = 0 # DSF
+    identification = random.randint(0, 0xFFFF)
+    ip_header_len = IP_HEADER_LEN
+    udp_header_len = UDP_HEADER_LEN
+    ttl = 255
+    ip_proto_udp = 17
+    flags_fragment_offset = 0
+    checksum = 0
+
+    # udp header
+    header_without_checksum = struct.pack('!BBHHHBBH4s4s', ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, checksum, socket.inet_aton(src_ip), socket.inet_aton(multicast_ip))
+
+    calculated_checksum = ip_checksum(header_without_checksum)
+
+    ip_header = struct.pack("!BBHHHBBH4s4s", ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, calculated_checksum, socket.inet_aton(src_ip), socket.inet_aton(multicast_ip))
+
+    udp_header = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, 0)
+    checksum = udp_checksum(src_ip, multicast_ip, UDP_HEADER_LEN + mdns_len, udp_header, mdns_payload)
+    udp_header_with_checksum = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, checksum)
+
+    pkt = eth_header + ip_header + udp_header_with_checksum + mdns_payload
+
+    skt.send(pkt)
+    return
+
+def send_airplay_response(src_mac, src_ip, hostname, socket):
+    pass
+
+def prepare_redirect(target_ip, src_mac, src_ip, socket, packet: MDNSPacket, hostname: str):
+    if packet.header.num_questions > 0:
+        service_name_list = []
+        for i in range(0,packet.header.num_questions):
+            service_name_list.append(packet.questions[i].name.decode('utf-8','ignore'))
+        for service_name in service_name_list:
+            if 'spotify' in service_name:
+                send_spotify_response(service_name, src_mac, src_ip, hostname, socket)
+            if 'airplay' in service_name:
+                send_airplay_response(src_mac, src_ip, hostname, socket)
 
 def parse_mdns_packet(data: bytes) -> MDNSPacket:
     """

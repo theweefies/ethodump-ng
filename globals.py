@@ -2,10 +2,11 @@
 """
 Globals module for ethodump-ng
 """
-import socket
 import re
-import ipaddress
 import os
+import queue
+import socket
+import ipaddress
 import threading
 import urllib.request
 from urllib.parse import urlparse, ParseResult
@@ -33,6 +34,10 @@ ETH_ANY_ADDRESS = '00:00:00:00:00:00'
 clients = {}
 oui_table = {}
 oui_file = "oui.csv"
+tcp_fp_dbase_list = []
+tcp_fps = {}
+
+mdns_queue = queue.Queue(100)
 
 DARK_RED = '\x1b[31m'
 DEFAULT = '\x1b[0m'
@@ -42,6 +47,13 @@ CLEAR_SCREEN_CURSOR_TO_TOP = '\x1b[2J\x1b[H'
 # Mapping the keys [w,e,r,t,y,u,i,o,p] to numbers [10-18]
 key_mapping = {'w': 10, 'e': 11, 'r': 12, 't': 13, 'y': 14, 'u': 15, 'i': 16, 'o': 17, 'p': 18}
 
+
+def mac_address_to_bytes(mac_address):
+    """
+    Convert a colon-delimited MAC address string to a byte string.
+    """
+    hex_str = mac_address.replace(':', '')
+    return bytes.fromhex(hex_str)
 
 def bytes_to_mac(bytes: bytes) -> str:
     """
@@ -210,29 +222,31 @@ class Client:
             'COUNTS': self.count
         }
 
-def add_port(src_port: int, cur_client: Client) -> None:
+def add_port(dst_port: int, cur_client: Client) -> None:
     """
     Function to add a port number to the client class instance.
     """
-    if src_port < 5500:
-        cur_client.ports.add(src_port)
+    #if src_port < 5500:
+    cur_client.ports.add(dst_port)
 
-def add_ttl(ttl: int, src_port: int, dst_port, cur_client: Client) -> None:
+def add_ttl(ttl: int, cur_client: Client) -> None:
     """
     Function to add a ttl for known trustworthy port traffic
     Port/TTL relational analysis:
     tshark -r test.dump -Y "ip.src == $IP_ADDRESS" -Tfields -e ip.ttl -e udp.srcport -e udp.dstport -e tcp.srcport -e tcp.dstport | sort -u
-
-    DHCP, MDNS, and SSDP seem to have unreliable TTL values that do not reflect the device type.
     """
-    if dst_port == 1900 or src_port == 1900:
-        return
-    elif dst_port == 5353 or src_port == 5353:
-        return
-    elif dst_port == 68 or src_port == 68:
-        return
-    
-    cur_client.ttl = ttl
+    guessed_ttl_start = ttl
+
+    if ttl >= 0 and ttl <= 32:
+        guessed_ttl_start = 32
+    elif ttl > 32 and ttl <= 64:
+        guessed_ttl_start = 64
+    elif ttl > 64 and ttl <= 128:
+        guessed_ttl_start = 128
+    elif ttl > 128:
+        guessed_ttl_start = 255
+
+    cur_client.ttl = guessed_ttl_start
 
 def get_manufacturer(self: Client) -> None:
     """
