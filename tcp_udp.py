@@ -6,6 +6,7 @@ module for ethodump-ng
 """
 
 import struct
+import socket
 from dataclasses import dataclass
 from io import BytesIO
 import sys
@@ -114,6 +115,10 @@ class UDPHeader:
     length: int
     checksum: bytes
     payload_length: int
+
+"""
+NOTE: TCP FINGERPRINT FUNCTIONS
+"""
 
 def load_tcp_fp_dbase():
     global tcp_fp_dbase_list
@@ -372,6 +377,147 @@ def tcp_ip_fingerprint(pkt, ip_header: IPHeader, tcp_header: TCPHeader, cur_clie
         os_score = score_fp(tcp_fp)
         if os_score:
             cur_client.fingerprints["tcp"] = os_score
+
+
+"""
+NOTE: PACKET CREATION FUNCTIONS
+"""
+
+def ip_checksum(ip_header):
+    assert len(ip_header) % 2 == 0, "Header length must be even."
+
+    checksum = 0
+    for i in range(0, len(ip_header), 2):
+        word = (ip_header[i] << 8) + ip_header[i+1]
+        checksum += word
+        checksum = (checksum & 0xffff) + (checksum >> 16)
+
+    return ~checksum & 0xffff
+
+def udp_checksum(src_addr, dest_addr, udp_length, udp_header, udp_data):
+    """
+    Calculate the UDP checksum including the pseudo-header.
+    """
+    # Pseudo-header fields
+    protocol = 17  # UDP protocol number
+    pseudo_header = struct.pack('!4s4sBBH', 
+                                socket.inet_aton(src_addr), 
+                                socket.inet_aton(dest_addr), 
+                                0, 
+                                protocol, 
+                                udp_length)
+
+    # Calculate the checksum including pseudo-header
+    checksum = 0
+    # Process the pseudo-header
+    for i in range(0, len(pseudo_header), 2):
+        word = (pseudo_header[i] << 8) + pseudo_header[i + 1]
+        checksum += word
+        checksum = (checksum & 0xffff) + (checksum >> 16)
+
+    # Process the UDP header
+    for i in range(0, len(udp_header), 2):
+        word = (udp_header[i] << 8) + udp_header[i + 1]
+        checksum += word
+        checksum = (checksum & 0xffff) + (checksum >> 16)
+
+    # Process the data
+    if len(udp_data) % 2:  # if odd length, pad with a zero byte
+        udp_data += b'\x00'
+    for i in range(0, len(udp_data), 2):
+        word = (udp_data[i] << 8) + udp_data[i + 1]
+        checksum += word
+        checksum = (checksum & 0xffff) + (checksum >> 16)
+
+    return ~checksum & 0xffff
+
+def create_udp_header(src_port, dst_port, length, checksum):
+    
+    return struct.pack("!HHHH", src_port, dst_port, length, checksum)
+
+# Calculate the checksum
+def checksum(data):
+    if len(data) % 2 != 0:
+        data += b'\0'
+    s = sum(struct.unpack("!%dH" % (len(data) // 2), data))
+    s = (s >> 16) + (s & 0xffff)
+    s += s >> 16
+    return ~s & 0xffff
+
+# Crafting the ACK packet
+def create_ack_packet(src_ip, src_port, dst_ip, dst_port, seq_num, ack_num):
+    # IP header fields
+    ip_header = struct.pack(
+        '!BBHHHBBH4s4s', 
+        69, 0, 40, 0, 0, 64, socket.IPPROTO_TCP, 0, socket.inet_aton(dst_ip), socket.inet_aton(src_ip)
+    )
+    
+    # TCP header fields
+    tcp_header = struct.pack(
+        '!HHLLBBHHH', 
+        dst_port, src_port, ack_num, seq_num + 1, 80, 16, 8192, 0, 0
+    )
+    
+    # Calculate the checksum for the TCP segment
+    placeholder = 0
+    protocol = socket.IPPROTO_TCP
+    tcp_length = len(tcp_header)
+    psh = struct.pack(
+        '!4s4sBBH', 
+        socket.inet_aton(dst_ip), socket.inet_aton(src_ip), placeholder, protocol, tcp_length
+    )
+    psh = psh + tcp_header
+    tcp_checksum = checksum(psh)
+    
+    # Recreate the TCP header with the correct checksum
+    tcp_header = struct.pack(
+        '!HHLLBBH', 
+        dst_port, src_port, ack_num, seq_num + 1, 80, 16, 8192
+    ) + struct.pack('H', tcp_checksum) + struct.pack('!H', 0)
+    
+    return ip_header + tcp_header
+
+def start_server(interface, port, allowed_ip):
+    # Create a raw socket to capture packets
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, interface.encode())
+
+    while True:
+        packet, addr = server_socket.recvfrom(65535)
+        ip_header = packet[0:20]
+        iph = struct.unpack('!BBHHHBBH4s4s', ip_header)
+
+        version_ihl = iph[0]
+        ihl = version_ihl & 0xF
+        iph_length = ihl * 4
+
+        ttl, protocol, src_ip, dst_ip = iph[5], iph[6], socket.inet_ntoa(iph[8]), socket.inet_ntoa(iph[9])
+        
+        if src_ip == allowed_ip and protocol == socket.IPPROTO_TCP:
+            tcp_header = packet[iph_length:iph_length+20]
+            tcph = struct.unpack('!HHLLBBHHH', tcp_header)
+            src_port, dst_port, seq, ack_seq, doff_reserved, flags = tcph[0], tcph[1], tcph[2], tcph[3], tcph[4], tcph[5]
+
+            syn_flag = flags & 0x02
+            if syn_flag:
+                print(f"SYN packet from {src_ip}:{src_port}")
+
+                # Create and send an ACK packet
+                ack_packet = create_ack_packet(
+                    src_ip=src_ip,
+                    src_port=src_port,
+                    dst_ip=dst_ip,
+                    dst_port=dst_port,
+                    seq_num=seq,
+                    ack_num=ack_seq
+                )
+                send_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+                send_socket.sendto(ack_packet, (src_ip, 0))
+                print("ACK packet sent.")
+
+"""
+NOTE: PACKET PARSING FUNCTIONS
+"""
 
 def parse_eth_header(reader: BytesIO) -> ETHHeader | None:
     """

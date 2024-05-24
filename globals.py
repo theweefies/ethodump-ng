@@ -4,13 +4,21 @@ Globals module for ethodump-ng
 """
 import re
 import os
+import sys
+import yaml
 import queue
+import time
+import uuid
 import socket
+import random
 import ipaddress
 import threading
+import subprocess
 import urllib.request
 from urllib.parse import urlparse, ParseResult
 from urllib.error import URLError
+
+import yaml.scanner
 
 ETH_P = b'\x08\x00'
 ETH_IPV6 = b'\x86\xDD'
@@ -38,6 +46,8 @@ tcp_fp_dbase_list = []
 tcp_fps = {}
 
 mdns_queue = queue.Queue(100)
+ssdp_queue = queue.Queue(100)
+HOSTNAME = subprocess.getoutput('hostname')
 
 DARK_RED = '\x1b[31m'
 DEFAULT = '\x1b[0m'
@@ -47,6 +57,116 @@ CLEAR_SCREEN_CURSOR_TO_TOP = '\x1b[2J\x1b[H'
 # Mapping the keys [w,e,r,t,y,u,i,o,p] to numbers [10-18]
 key_mapping = {'w': 10, 'e': 11, 'r': 12, 't': 13, 'y': 14, 'u': 15, 'i': 16, 'o': 17, 'p': 18}
 
+def generate_hex_string(length):
+    hex_digits = "0123456789abcdef"
+    random.seed(time.time())
+    
+    hex_string = ''.join(random.choice(hex_digits) for _ in range(length))
+    
+    return hex_string
+
+PK = generate_hex_string(64)
+UUID_K = str(uuid.uuid4())
+
+def is_self_L2(packet_mac: str, iface_mac: str) -> bool:
+    """
+    Function to compare the source mac of a packet with the
+    current system interface mac. Used to ignore packet coming
+    from the system interface.
+    """
+    if packet_mac == iface_mac:
+        return True
+    else:
+        return False
+    
+def is_self_L2_L3(packet_mac: str, iface, packet_ip: str) -> bool:
+    """
+    Function to compare the source mac of a packet with the
+    current system interface mac (and for layer 3 as well). 
+    Used to ignore packet coming from the system interface.
+    """
+    if packet_mac == iface.mac and packet_ip == iface.ip:
+        return True
+    else:
+        return False
+
+def is_multicast_or_broadcast(mac_address: str) -> bool:
+    """
+    Check if the MAC address is multicast or broadcast.
+    """
+    if mac_address == ETH_BCAST_ADDRESS:
+        return True  # Broadcast address
+    # Split the MAC address string into octets and take the first one
+    first_octet_str = mac_address.split(':')[0]  # Assuming MAC address is separated by ':'
+    # Convert the first octet to an integer
+    first_octet_int = int(first_octet_str, 16)  # Convert from hexadecimal to integer
+    # Multicast address check (LSB of first octet is 1)
+    return (first_octet_int & 0x01) == 0x01
+
+def validate_ip(ip):
+    """Validate an IPv4 address."""
+    pattern = re.compile(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$")
+    return pattern.match(ip) is not None
+
+def validate_port(port):
+    """Validate a port number."""
+    return 0 <= port <= 65535
+
+class RedirectObject:
+    def __init__(self, red_port, red_ip, tgt_ip, hostname, red_path):
+        self.redirect_port = red_port
+        self.redirect_ip = red_ip
+        self.target_ip = tgt_ip
+        self.hostname = hostname if hostname else HOSTNAME
+        self.redirect_path = red_path
+
+def load_redirect_yaml(file_path):
+    if not os.path.exists(file_path):
+        print('[!] ERROR: Configuration file does not exist.')
+        sys.exit(0)
+    try:
+        print(f'[+] Loading yaml redirect config "{file_path}"')
+        with open(file_path, 'r') as file:
+            config = yaml.safe_load(file)
+    except yaml.scanner.ScannerError as e:
+        print('[!] ERROR: Malformed yaml configuration file.')
+        sys.exit(0)
+
+    redirect_port = config.get('Redirect-Port')
+    redirect_ip = config.get('Redirect-IP')
+    target_ip = config.get('Target-IP')
+    hostname = config.get('Hostname')
+    redirect_path = config.get('Redirect-Path')
+
+    errors = []
+
+    # Validate Redirect-Port
+    if not isinstance(redirect_port, int) or not validate_port(redirect_port):
+        errors.append(f"Invalid Redirect-Port: {redirect_port}")
+
+    # Validate Redirect-IP
+    if not validate_ip(redirect_ip):
+        errors.append(f"Invalid Redirect-IP: {redirect_ip}")
+
+    # Validate Target-IP
+    if not validate_ip(target_ip):
+        errors.append(f"Invalid Target-IP: {target_ip}")
+
+    # Validate Hostname
+    if hostname and not isinstance(hostname, str):
+        errors.append(f"Invalid Hostname: {hostname}")
+
+    # Validate Redirect-Path
+    if not redirect_path or not isinstance(redirect_path, str):
+        errors.append(f"Invalid Redirect-Path: {redirect_path}")
+
+    if errors:
+        for error in errors:
+            print(f"[!] ERROR: {error} in config file.")
+            sys.exit(0)
+    else:
+        # Return the valid configuration
+        return RedirectObject(redirect_port, redirect_ip, target_ip, hostname, redirect_path)
 
 def mac_address_to_bytes(mac_address):
     """
@@ -120,6 +240,17 @@ def is_private_ipv4(ip_str: str) -> bool:
         return False
     except ValueError:
         return False
+
+class ResponseObject:
+    """
+    An object class to hold data required for response packets.
+    """
+    def __init__(self, hostname, src_mac, src_ip, service, srv_port):
+        self.hostname = hostname
+        self.src_mac = src_mac
+        self.src_ip = src_ip
+        self.srv_port = srv_port if srv_port else 7000
+        self.service = service
 
 class Flags:
     """

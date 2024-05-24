@@ -32,7 +32,7 @@ class IGMPLeaveGroup:
 
 @dataclass
 class IGMPReportRecord:
-    record_type: int
+    type_: int
     aux_data_len: int
     num_sources: int
     multicast_address: str
@@ -45,6 +45,44 @@ class IGMPReport:
     reserved: int
     num_group_records: int
     group_records: List[IGMPReportRecord] = field(default_factory=list)
+
+def calculate_igmp_checksum(igmp_packet):
+    """
+    Calculate the checksum for an IGMP membership report packet.
+    
+    Args:
+    - igmp_packet: A bytes object representing the entire IGMP packet
+      with the two byte checksum zeroed out.
+    
+    Returns:
+    - The packet with the caclculated checksum inserted.
+    """
+    # Extract the IGMP portion (last 8 bytes in this case)
+    igmp_portion = igmp_packet[-8:]
+    
+    # Set the checksum bytes to zero
+    igmp_portion = igmp_portion[:2] + b'\x00\x00' + igmp_portion[4:]
+    
+    # Ensure the length is even by adding a padding byte if necessary
+    if len(igmp_portion) % 2 != 0:
+        igmp_portion += b'\x00'
+    
+    # Convert the IGMP portion into a list of 16-bit words
+    words = [igmp_portion[i] << 8 | igmp_portion[i + 1] for i in range(0, len(igmp_portion), 2)]
+    
+    # Sum the 16-bit words
+    checksum = sum(words)
+    
+    # Add carry bits to fit the sum into 16 bits
+    while checksum >> 16:
+        checksum = (checksum & 0xFFFF) + (checksum >> 16)
+    
+    # Take the one's complement of the result
+    checksum = ~checksum & 0xFFFF
+
+    igmp_packet_with_checksum = igmp_packet[:-8] + igmp_packet[-8:][:2] + checksum.to_bytes(2, 'big') + igmp_packet[-8:][4:]
+
+    return igmp_packet_with_checksum
 
 def parse_igmp(payload: bytes) -> None | IGMPQuery | IGMPReport:
     """

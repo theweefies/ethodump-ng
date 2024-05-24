@@ -7,48 +7,41 @@ DNS From:  https://implement-dns.wizardzines.com/book/part_1
 
 /usr/bin/../share/nmap/nselib/data/http-fingerprints.lua
 """
+import argparse
 import os
-import sys
-import tty
-import time
 import queue
 import select
 import socket
 import struct
+import sys
 import termios
-import argparse
-import netifaces
 import threading
-import subprocess
-
+import time
+import tty
+import random
 from io import BytesIO
 
+import netifaces
+
 from arp import parse_arp, process_arp
+from dhcp import *
 from dns_ import parse_dns_packet, process_dns_packet
-from tls import parse_tls_payload, find_ja3_classification
-from dhcp import parse_dhcp_packet, parse_dhcpv6_packet, extract_dhcp_client_details, \
-    match_dhcp_fingerprint, extract_fqdn_from_options
+from globals import *
+from http_ import detect_service_banner, parse_http
 from icmp import parse_icmp, parse_icmpv6, process_icmpv6_packet
 from igmp import parse_igmp
-from mdns import parse_mdns_packet, process_mdns_packet, prepare_redirect
-from ssdp import parse_ssdp_packet
-from http_ import parse_http, detect_service_banner
-from tcp_udp import parse_eth_header, parse_ip_header, parse_tcp_header, parse_udp_header, parse_ipv6_header, tcp_ip_fingerprint, load_tcp_fp_dbase
-from netbios import parse_netbios_packet, parse_netbios_datagram
+from mdns import parse_mdns_packet, prepare_redirect, process_mdns_packet
 from mndp import parse_mndp_packet, process_mndp_packet
+from netbios import parse_netbios_datagram, parse_netbios_packet
+from ssdp import parse_ssdp_packet
+from tcp_udp import *
+from tls import find_ja3_classification, parse_tls_payload
+from responses import create_igmp_membership_report
 
-from globals import key_mapping
-from globals import MAGIC, CIGAM
-from globals import DARK_RED, DEFAULT, CURSOR_TO_TOP, CLEAR_SCREEN_CURSOR_TO_TOP
-from globals import ETH_P, ARP_P, ETH_P_ALL, ETH_IPV6
-from globals import ETH_BCAST_ADDRESS, IPV6_ANY_ADDRESS
-from globals import PCAP_GLOBAL_HEADER_ETHERNET, QUEUE_SIZE
-from globals import Client, Flags
-from globals import oui_table, oui_file, clients
-from globals import is_private_ipv4, add_port, add_ttl, tcp_fp_dbase_list
-from globals import mdns_queue
+GRAB_RESOURCES = False
+TARGET_IP = None
 
-class interface:
+class Interface:
     """
     Class to store and initialize system interface attributes.
     """
@@ -79,7 +72,7 @@ class interface:
         try:
             self.mac = netifaces.ifaddresses(self.interface_name)[netifaces.AF_LINK][0]['addr']
             self.ip = netifaces.ifaddresses(self.interface_name)[netifaces.AF_INET][0]['addr']
-        except Exception as e:
+        except Exception:
             print('[!] ERROR: Please check the interface name and try again.')
             sys.exit(0)
 
@@ -270,19 +263,6 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
         else:
             pass
 
-def is_multicast_or_broadcast(mac_address: str) -> bool:
-    """
-    Check if the MAC address is multicast or broadcast.
-    """
-    if mac_address == ETH_BCAST_ADDRESS:
-        return True  # Broadcast address
-    # Split the MAC address string into octets and take the first one
-    first_octet_str = mac_address.split(':')[0]  # Assuming MAC address is separated by ':'
-    # Convert the first octet to an integer
-    first_octet_int = int(first_octet_str, 16)  # Convert from hexadecimal to integer
-    # Multicast address check (LSB of first octet is 1)
-    return (first_octet_int & 0x01) == 0x01
-
 def load_oui() -> None:
     """
     Function to load an oui dictionary from an oui
@@ -297,29 +277,7 @@ def load_oui() -> None:
     except FileNotFoundError:
         print(f'[!] File Not Found: {oui_file}')
 
-def is_self_L2(packet_mac: str, iface_mac: str) -> bool:
-    """
-    Function to compare the source mac of a packet with the
-    current system interface mac. Used to ignore packet coming
-    from the system interface.
-    """
-    if packet_mac == iface_mac:
-        return True
-    else:
-        return False
-    
-def is_self_L2_L3(packet_mac: str, iface: interface, packet_ip: str) -> bool:
-    """
-    Function to compare the source mac of a packet with the
-    current system interface mac (and for layer 3 as well). 
-    Used to ignore packet coming from the system interface.
-    """
-    if packet_mac == iface.mac and packet_ip == iface.ip:
-        return True
-    else:
-        return False
-
-def parse_packet(p: bytes, own_iface: interface, args) -> None:
+def parse_packet(p: bytes, own_iface: Interface, args, red_object: RedirectObject=None) -> None:
     """
     Main packet parsing function. Processes Layer 2&^ headers by addressing
     protocols, and ports. 
@@ -328,8 +286,10 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
     GRAB_RESOURCES = args.resource_grab
     if args.read_pcap:
         GRAB_RESOURCES = False
-
-    MDNS_REDIRECT_IP = args.mdns_redirect
+    if red_object:
+        TARGET_IP = red_object.target_ip
+    else:
+        TARGET_IP = None
 
     reader = BytesIO(p)
     eth_header = parse_eth_header(reader)
@@ -357,8 +317,10 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
         elif eth_header.eth_type == ETH_P:
             
             ip_header = parse_ip_header(reader)
+            if not ip_header:
+                return
             
-            if is_private_ipv4(ip_header.src_ip):
+            if ip_header.src_ip and is_private_ipv4(ip_header.src_ip):
                 cur_client.ip_address = ip_header.src_ip
 
             if is_private_ipv4(ip_header.dst_ip) and not is_multicast_or_broadcast(eth_header.dst_mac):
@@ -366,6 +328,8 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
 
             if ip_header.protocol == 17: # UDP
                 udp_header = parse_udp_header(reader)
+                if not udp_header:
+                    return
                 payload = reader.read(udp_header.payload_length)
                 add_port(udp_header.dst_port, cur_client)
                 add_ttl(ip_header.ttl, cur_client)
@@ -405,6 +369,8 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                     ssdp_packet = parse_ssdp_packet(payload, cur_client, flags.lock, GRAB_RESOURCES)
                     if not ssdp_packet:
                         write_packet(p, "ethodebug.pcap")
+                    elif ssdp_packet and TARGET_IP:
+                        ssdp_queue.put((ip_header.src_ip, udp_header.src_port, payload))
                     cur_client.protocols.add('SSDP')
                     return
                     
@@ -414,7 +380,7 @@ def parse_packet(p: bytes, own_iface: interface, args) -> None:
                         write_packet(p, "ethodebug.pcap")
                     else:
                         process_mdns_packet(mdns_packet, cur_client)
-                        if ip_header.src_ip == MDNS_REDIRECT_IP:
+                        if TARGET_IP and ip_header.src_ip == TARGET_IP:
                             mdns_queue.put(mdns_packet)
                     cur_client.protocols.add('MDNS')
                     return
@@ -602,7 +568,7 @@ def packet_reader(filename: str):
     
     flags.exit_flag = True
 
-def packet_parser(iface: interface, args) -> None:
+def packet_parser(iface: Interface, args, red_object=None) -> None:
     """
     One of main threads. Function pulls packets from the queue
     for parsing. 
@@ -610,7 +576,7 @@ def packet_parser(iface: interface, args) -> None:
     while not flags.exit_flag:
         try:
             pkt = packet_queue.get(timeout=1)  # Timeout ensures that the loop checks the flag periodically
-            parse_packet(pkt, iface, args)
+            parse_packet(pkt, iface, args, red_object)
             packet_queue.task_done()
         except queue.Empty:
             continue  # Continue checking the flag if the queue is empty
@@ -628,7 +594,7 @@ def packet_writer(filename: str | None) -> None:
         except queue.Empty:
             continue
 
-def packet_listener(iface: interface, filename: str | None):
+def packet_listener(iface: Interface, filename: str | None):
     """
     One of main theads. Function reads raw packets from a socket,
     then writing them to a parsing and writing queue. 
@@ -684,27 +650,79 @@ def write_header(filename: str) -> None:
     f_out.write(PCAP_GLOBAL_HEADER_ETHERNET)
     f_out.close()
 
-def mdns_redirect(target_ip: str, interface: str, hostname: str) -> None:
+def ssdp_responder(own_iface: Interface, red_object: RedirectObject) -> None:
+    """
+    Function to handle ssdp advertisements
+    """
+    uuid = UUID_K
+    
+    while not flags.exit_flag:
+        try:
+            (ip_src, src_port, payload) = ssdp_queue.get(timeout=1)
+            print('SSDP Packet received from: ', ip_src)
+            timenow = time.gmtime()
+            # Format the current time to the specified format
+            formatted_time = time.strftime("%a, %d %b %Y %H:%M:%S GMT", timenow)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                # Bind the socket to the interface and port
+                sock.bind(("", random.randint(49152,65535)))
+                response = f"""HTTP/1.1 200 OK\r
+CACHE-CONTROL: max-age=1800\r
+DATE: {formatted_time}\r
+EXT: \r
+LOCATION: http://{red_object.redirect_ip}:{red_object.redirect_port}{redirect_object.redirect_path}\r
+SERVER: Sony-Linux/4.1, UPnP/1.0, Sony_UPnP_SDK/1.0\r
+ST: urn:dial-multiscreen-org:service:dial:1\r
+USN: uuid:{uuid}::urn:dial-multiscreen-org:service:dial:1\r
+WAKEUP: MAC={own_iface.mac};Timeout=10\r
+Content-Length: 0\r
+BOOTID.UPNP.ORG: 52\r\n\r\n"""
+                sock.sendto(response.encode(), (ip_src, src_port))
+            ssdp_queue.task_done()
+
+        except queue.Empty:
+            continue
+
+def mdns_redirect(own_iface: Interface, red_object: RedirectObject) -> None:
     """
     Function to handle mnds interactions for redirection
     """
     try:
         # Create a UDP socket
-        send_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0x0800)
-        send_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, bytes(interface, 'utf-8'))
-        send_socket.bind((interface, 0))
+        mdns_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0x0800)
+        mdns_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, bytes(own_iface.interface_name, 'utf-8'))
+        mdns_socket.bind((own_iface.interface_name, 0))
     except OSError as e:
-        print(f'[!] ERROR: Problem creating socket on {interface} for sending mdns traffic.')
+        print(f'[!] ERROR: Problem creating socket on {own_iface.interface_name} for sending mdns traffic.')
         return
+    
+    try:
+        # Create a UDP socket
+        igmp_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0x0800)
+        igmp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, bytes(own_iface.interface_name, 'utf-8'))
+        igmp_socket.bind((own_iface.interface_name, 0))
+    except OSError as e:
+        print(f'[!] ERROR: Problem creating socket on {own_iface.interface_name} for sending igmp multicast membership reports.')
+        return
+
+    start_time = time.time()
 
     while not flags.exit_flag:
         try:
             pkt = mdns_queue.get(timeout=1)
-            prepare_redirect(target_ip, iface.mac, iface.ip, send_socket, pkt, hostname)
+            prepare_redirect(mdns_socket, pkt, own_iface, red_object)
             mdns_queue.task_done()
+            
+            # Calculate the elapsed time
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= 10:
+                create_igmp_membership_report(own_iface, igmp_socket)
+                start_time = time.time()
         except queue.Empty:
             continue
 
+    mdns_socket.close()
+    igmp_socket.close()
 
 if __name__ == "__main__":
 
@@ -715,8 +733,7 @@ if __name__ == "__main__":
     ed_argparse.add_argument('-s', '--save', action='store', type=str, help='Pass the file name to save detailed results.', required=False)
     ed_argparse.add_argument('-r', '--resource-grab', action='store_true', help='Enable resource grabbing (Performs GET against resource urns).', required=False)
     ed_argparse.add_argument('-p', '--read-pcap', action='store', type=str, help='Pass a pcap file to read', required=False)
-    ed_argparse.add_argument('-m', '--mdns-redirect', action='store', type=str, help='Enter the target IP for mdns redirection.', required=False, default=None)
-    ed_argparse.add_argument('-n', '--hostname', action='store', type=str, help='Pass the hostname to send in response packets. Default = system hostname', required=False, default=subprocess.getoutput('hostname'))
+    ed_argparse.add_argument('-m', '--redirect', action='store', type=str, help='Enter the filename/path for redirection configuration.', required=False, default=None)
     ed_argparse.add_argument('-d', '--debug', action='store_true', help='Set the script debug to verbose.', required=False, default=False)
     ed_argparse.add_argument('-v', '--version', action='version')
 
@@ -735,8 +752,8 @@ if __name__ == "__main__":
     listener_thread = None
     display_thread = None
     keypress_thread = None
-
-    load_tcp_fp_dbase()
+    mdns_redirect_thread = None
+    ssdp_thread = None
 
     if not args.interface and not args.read_pcap:
         print('ERROR: either --interface or --read must be specified.')
@@ -745,10 +762,14 @@ if __name__ == "__main__":
     if args.interface:
         interface_name = args.interface
 
+    load_tcp_fp_dbase()
     load_oui()
 
+    if args.redirect:
+        redirect_object = load_redirect_yaml(args.redirect)
+    
     # Initialize global interface object class
-    iface = interface(interface_name)
+    iface = Interface(interface_name)
     # Initialize global display status info and input control class
     status_info = StatusInfo(interface_name)
     # Initialize global flags class for signal management
@@ -773,46 +794,34 @@ if __name__ == "__main__":
     if args.write:
         write_header(args.write)
         write_queue = queue.Queue(QUEUE_SIZE)
-        write_thread = threading.Thread(target=packet_writer, args=(args.write,))
-        write_thread.daemon = True
-        write_thread.start()
+        write_thread = threading.Thread(target=packet_writer, args=(args.write,), daemon=True).start()
 
     # Start parser threads
     for _ in range(num_workers):
-        worker_thread = threading.Thread(target=packet_parser, args=(iface,args,))
-        worker_thread.daemon = True
-        worker_thread.start()
+        worker_thread = threading.Thread(target=packet_parser, args=(iface,args,redirect_object,), daemon=True).start()
 
     if args.read_pcap:
         # start the read thread
-        read_thread = threading.Thread(target=packet_reader, args=(args.read_pcap,))
-        read_thread.daemon = True
-        read_thread.start()
+        read_thread = threading.Thread(target=packet_reader, args=(args.read_pcap,), daemon=True).start()
 
     if not args.read_pcap:
         # Start the listener thread
-        listener_thread = threading.Thread(target=packet_listener, args=(iface,args.write,))
-        listener_thread.daemon = True
-        listener_thread.start()
+        listener_thread = threading.Thread(target=packet_listener, args=(iface,args.write,), daemon=True).start()
 
     if not args.debug:
         # Start the display thread
-        display_thread = threading.Thread(target=display_devices, args=(clients, status_info,))
-        display_thread.daemon = True
-        display_thread.start()
+        display_thread = threading.Thread(target=display_devices, args=(clients, status_info,), daemon=True).start()
 
     # Start the key press listener thread
-    keypress_thread = threading.Thread(target=key_press_listener, args=(handle_key_press,))
-    keypress_thread.daemon = True
-    keypress_thread.start()
+    keypress_thread = threading.Thread(target=key_press_listener, args=(handle_key_press,), daemon=True).start()
 
-    if args.mdns_redirect and not args.read_pcap:
-        mdns_redirect_thread = threading.Thread(target=mdns_redirect, args=(args.mdns_redirect,interface_name,args.hostname,))
-        mdns_redirect_thread.daemon = True
-        mdns_redirect_thread.start()
+    if args.redirect and not args.read_pcap:
+        mdns_redirect_thread = threading.Thread(target=mdns_redirect, args=(iface, redirect_object,), daemon=True).start()
+        ssdp_thread = threading.Thread(target=ssdp_responder, args=(iface, redirect_object,), daemon=True).start()
 
     try:
         while not flags.exit_flag:
+            time.sleep(1)
             pass
 
     except KeyboardInterrupt:

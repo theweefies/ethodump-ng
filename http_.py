@@ -4,7 +4,6 @@
 Module to handle HTTP packets for ethodump-ng.
 """
 import re
-import os
 import datetime
 import threading
 import base64
@@ -157,5 +156,5 @@ def parse_http(payload: bytes | str, cur_client, lock: threading.Lock, resource_
     if form_encoded:
         file = check_make_path(cur_client.ip_address, f'form_encoded_{short_format_date_time}.encwww')
         with open(file, 'wb') as www_fh:
-            www_fh.write(form_encoded)
+            www_fh.write(form_encoded.encode())
     
