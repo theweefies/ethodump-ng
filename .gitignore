@@ -6,3 +6,5 @@ output.txt
 test.dump
 test.pcap
 ethod.conf
+*.bak
+

@@ -27,7 +27,7 @@ from arp import parse_arp, process_arp
 from dhcp import *
 from dns_ import parse_dns_packet, process_dns_packet
 from globals import *
-from http_ import detect_service_banner, parse_http
+from http_ import detect_service_banner, parse_http, start_server
 from icmp import parse_icmp, parse_icmpv6, process_icmpv6_packet
 from igmp import parse_igmp
 from mdns import parse_mdns_packet, prepare_redirect, process_mdns_packet
@@ -277,19 +277,11 @@ def load_oui() -> None:
     except FileNotFoundError:
         print(f'[!] File Not Found: {oui_file}')
 
-def parse_packet(p: bytes, own_iface: Interface, args, red_object: RedirectObject=None) -> None:
+def parse_packet(p: bytes, own_iface: Interface) -> None:
     """
     Main packet parsing function. Processes Layer 2&^ headers by addressing
     protocols, and ports. 
     """
-
-    GRAB_RESOURCES = args.resource_grab
-    if args.read_pcap:
-        GRAB_RESOURCES = False
-    if red_object:
-        TARGET_IP = red_object.target_ip
-    else:
-        TARGET_IP = None
 
     reader = BytesIO(p)
     eth_header = parse_eth_header(reader)
@@ -334,7 +326,7 @@ def parse_packet(p: bytes, own_iface: Interface, args, red_object: RedirectObjec
                 add_port(udp_header.dst_port, cur_client)
                 add_ttl(ip_header.ttl, cur_client)
 
-                if udp_header.src_port == 53 or udp_header.dst_port == 53: # DNS
+                if udp_header.src_port == 53: # DNS
                     dns_packet = parse_dns_packet(payload)
                     process_dns_packet(dns_packet, cur_client)
                     if not dns_packet:
@@ -342,7 +334,7 @@ def parse_packet(p: bytes, own_iface: Interface, args, red_object: RedirectObjec
                     cur_client.protocols.add('DNS')
                     return
                 
-                elif udp_header.src_port == 68:
+                elif udp_header.src_port in [67,68]:
                     dhcp_packet = parse_dhcp_packet(payload)
                     if not dhcp_packet:
                         write_packet(p, "ethodebug.pcap")
@@ -351,22 +343,22 @@ def parse_packet(p: bytes, own_iface: Interface, args, red_object: RedirectObjec
                     cur_client.protocols.add('DHCP')
                     return
 
-                elif udp_header.src_port == 137 or udp_header.dst_port == 137:
+                elif udp_header.src_port == 137:
                     nbns_packet = parse_netbios_packet(payload, cur_client)
                     if not nbns_packet:
                         write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('NETBIOS-UDP-137')
                     return
                 
-                elif udp_header.src_port == 138 or udp_header.dst_port == 138:
+                elif udp_header.src_port == 138:
                     nbns_packet = parse_netbios_datagram(payload)
                     if not nbns_packet:
                         write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('NETBIOS-UDP-138')
                     return
 
-                elif udp_header.dst_port == 1900 or udp_header.src_port == 1900:
-                    ssdp_packet = parse_ssdp_packet(payload, cur_client, flags.lock, GRAB_RESOURCES)
+                elif udp_header.dst_port == 1900:
+                    ssdp_packet = parse_ssdp_packet(payload, cur_client, GRAB_RESOURCES)
                     if not ssdp_packet:
                         write_packet(p, "ethodebug.pcap")
                     elif ssdp_packet and TARGET_IP:
@@ -385,7 +377,7 @@ def parse_packet(p: bytes, own_iface: Interface, args, red_object: RedirectObjec
                     cur_client.protocols.add('MDNS')
                     return
                 
-                elif udp_header.dst_port == 5678 or udp_header.src_port == 5678:
+                elif udp_header.src_port == 5678 or udp_header.dst_port == 5678:
                     mndp_packet = parse_mndp_packet(payload)
                     if not mndp_packet:
                         write_packet(p, "ethodebug.pcap")
@@ -406,12 +398,13 @@ def parse_packet(p: bytes, own_iface: Interface, args, red_object: RedirectObjec
                 detect_service_banner(payload, cur_client)
 
                 if b'GET' in payload or b'HTTP' in payload:
-                    parse_http(payload, cur_client, flags.lock, GRAB_RESOURCES)
+                    #parse_http(payload, cur_client, flags.lock, GRAB_RESOURCES)
+                    http_queue.put((payload, cur_client))
                     write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('HTTP')
                     return                
 
-                if tcp_header.dst_port == 22 or tcp_header.src_port == 22:
+                if tcp_header.src_port == 22:
                     cur_client.protocols.add('SSH')
                     return
                 
@@ -424,7 +417,7 @@ def parse_packet(p: bytes, own_iface: Interface, args, red_object: RedirectObjec
                     cur_client.protocols.add('HTTPS')
                     return
                 
-                if tcp_header.src_port == 445 or tcp_header.dst_port == 445: # SMB
+                if tcp_header.src_port == 445: # SMB
                     write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('SMB')
                     return
@@ -465,7 +458,7 @@ def parse_packet(p: bytes, own_iface: Interface, args, red_object: RedirectObjec
                 udp_header = parse_udp_header(reader)
                 payload = reader.read(udp_header.payload_length)
                 
-                if udp_header.src_port == 546 or udp_header.src_port == 547:
+                if udp_header.src_port in [546,547]:
                     dhcpv6_packet = parse_dhcpv6_packet(payload)
                     if not dhcpv6_packet:
                         write_packet(p, "ethodebug.pcap")
@@ -474,8 +467,8 @@ def parse_packet(p: bytes, own_iface: Interface, args, red_object: RedirectObjec
                     cur_client.protocols.add('DHCPv6')
                     return
 
-                if udp_header.dst_port == 1900 or udp_header.src_port == 1900:
-                    ssdp_packet = parse_ssdp_packet(payload, cur_client, flags.lock, GRAB_RESOURCES)
+                if udp_header.dst_port == 1900:
+                    ssdp_packet = parse_ssdp_packet(payload, cur_client, GRAB_RESOURCES)
                     if not ssdp_packet:
                         write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('SSDP')
@@ -497,8 +490,8 @@ def parse_packet(p: bytes, own_iface: Interface, args, red_object: RedirectObjec
                     process_icmpv6_packet(icmpv6_packet, cur_client)
                 cur_client.protocols.add('ICMPv6')
                 return
-            else:
-                write_packet(p, "ethodebug.pcap")
+        else:
+            write_packet(p, "ethodebug.pcap")
 
 def packet_reader(filename: str):
     """
@@ -568,7 +561,7 @@ def packet_reader(filename: str):
     
     flags.exit_flag = True
 
-def packet_parser(iface: Interface, args, red_object=None) -> None:
+def packet_parser(iface: Interface) -> None:
     """
     One of main threads. Function pulls packets from the queue
     for parsing. 
@@ -576,7 +569,7 @@ def packet_parser(iface: Interface, args, red_object=None) -> None:
     while not flags.exit_flag:
         try:
             pkt = packet_queue.get(timeout=1)  # Timeout ensures that the loop checks the flag periodically
-            parse_packet(pkt, iface, args, red_object)
+            parse_packet(pkt, iface)
             packet_queue.task_done()
         except queue.Empty:
             continue  # Continue checking the flag if the queue is empty
@@ -655,29 +648,35 @@ def ssdp_responder(own_iface: Interface, red_object: RedirectObject) -> None:
     Function to handle ssdp advertisements
     """
     uuid = UUID_K
-    
+    urn = None
     while not flags.exit_flag:
         try:
             (ip_src, src_port, payload) = ssdp_queue.get(timeout=1)
-            print('SSDP Packet received from: ', ip_src)
-            timenow = time.gmtime()
-            # Format the current time to the specified format
-            formatted_time = time.strftime("%a, %d %b %Y %H:%M:%S GMT", timenow)
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                # Bind the socket to the interface and port
-                sock.bind(("", random.randint(49152,65535)))
-                response = f"""HTTP/1.1 200 OK\r
+            payload = payload.decode('utf-8', 'ignore')
+            lines = re.split(r'\r?\n', payload)
+            for line in lines:
+                if 'ST:' in line:
+                    urn = line.replace('ST:','').strip()
+            if 'SEARCH' in payload and urn:
+                timenow = time.gmtime()
+                # Format the current time to the specified format
+                formatted_time = time.strftime("%a, %d %b %Y %H:%M:%S GMT", timenow)
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    # Bind the socket to the interface and port
+                    sock.bind(("", random.randint(49152,65535)))
+                    response = f"""HTTP/1.1 200 OK\r
 CACHE-CONTROL: max-age=1800\r
 DATE: {formatted_time}\r
 EXT: \r
 LOCATION: http://{red_object.redirect_ip}:{red_object.redirect_port}{redirect_object.redirect_path}\r
 SERVER: Sony-Linux/4.1, UPnP/1.0, Sony_UPnP_SDK/1.0\r
-ST: urn:dial-multiscreen-org:service:dial:1\r
-USN: uuid:{uuid}::urn:dial-multiscreen-org:service:dial:1\r
-WAKEUP: MAC={own_iface.mac};Timeout=10\r
+ST: {urn}\r
+NTS: ssdp:alive\r
+USN: uuid:{uuid}::{urn}\r
 Content-Length: 0\r
 BOOTID.UPNP.ORG: 52\r\n\r\n"""
-                sock.sendto(response.encode(), (ip_src, src_port))
+                
+                    sock.sendto(response.encode(), (ip_src, src_port))
             ssdp_queue.task_done()
 
         except queue.Empty:
@@ -724,6 +723,14 @@ def mdns_redirect(own_iface: Interface, red_object: RedirectObject) -> None:
     mdns_socket.close()
     igmp_socket.close()
 
+def handle_http() -> None:
+    while not flags.exit_flag:
+        try:
+            payload, cur_client = http_queue.get(timeout=1)
+            parse_http(payload, cur_client, GRAB_RESOURCES)
+        except queue.Empty:
+            continue
+
 if __name__ == "__main__":
 
     ed_argparse = argparse.ArgumentParser(prog='ethodump-ng', description='An Ethernet packet sniffing tool.')
@@ -731,7 +738,7 @@ if __name__ == "__main__":
     ed_argparse.add_argument('-i', '--interface', action='store', type=str, help='Enter the interface on which you want to sniff.', required=False)
     ed_argparse.add_argument('-w', '--write', action='store', type=str, help='Pass the file name to write packets.', required=False)
     ed_argparse.add_argument('-s', '--save', action='store', type=str, help='Pass the file name to save detailed results.', required=False)
-    ed_argparse.add_argument('-r', '--resource-grab', action='store_true', help='Enable resource grabbing (Performs GET against resource urns).', required=False)
+    ed_argparse.add_argument('-r', '--resource-grab', action='store_true', help='Enable resource grabbing (Performs GET against resource urns).', required=False, default=False)
     ed_argparse.add_argument('-p', '--read-pcap', action='store', type=str, help='Pass a pcap file to read', required=False)
     ed_argparse.add_argument('-m', '--redirect', action='store', type=str, help='Enter the filename/path for redirection configuration.', required=False, default=None)
     ed_argparse.add_argument('-d', '--debug', action='store_true', help='Set the script debug to verbose.', required=False, default=False)
@@ -754,6 +761,9 @@ if __name__ == "__main__":
     keypress_thread = None
     mdns_redirect_thread = None
     ssdp_thread = None
+    http_server_thread = None
+    # redirect object
+    redirect_object = None
 
     if not args.interface and not args.read_pcap:
         print('ERROR: either --interface or --read must be specified.')
@@ -767,7 +777,10 @@ if __name__ == "__main__":
 
     if args.redirect:
         redirect_object = load_redirect_yaml(args.redirect)
-    
+        TARGET_IP = redirect_object.target_ip
+
+    GRAB_RESOURCES = args.resource_grab
+
     # Initialize global interface object class
     iface = Interface(interface_name)
     # Initialize global display status info and input control class
@@ -781,11 +794,14 @@ if __name__ == "__main__":
     
     hide_cursor()
 
+    generate_sha1_hash(iface.mac)
+
     # temporary development mode measure
     if True:
         write_header("ethodebug.pcap")
 
     if args.read_pcap:
+        GRAB_RESOURCES = False
         if not os.path.exists(args.read_pcap):
             print(f'ERROR: File does not exist: {args.read_pcap}.')
             sys.exit()
@@ -798,7 +814,7 @@ if __name__ == "__main__":
 
     # Start parser threads
     for _ in range(num_workers):
-        worker_thread = threading.Thread(target=packet_parser, args=(iface,args,redirect_object,), daemon=True).start()
+        worker_thread = threading.Thread(target=packet_parser, args=(iface,), daemon=True).start()
 
     if args.read_pcap:
         # start the read thread
@@ -818,6 +834,9 @@ if __name__ == "__main__":
     if args.redirect and not args.read_pcap:
         mdns_redirect_thread = threading.Thread(target=mdns_redirect, args=(iface, redirect_object,), daemon=True).start()
         ssdp_thread = threading.Thread(target=ssdp_responder, args=(iface, redirect_object,), daemon=True).start()
+        http_server_thread = threading.Thread(target=start_server, args=(redirect_object,), daemon=True).start()
+
+    http_thread = threading.Thread(target=handle_http, daemon=True).start()
 
     try:
         while not flags.exit_flag:

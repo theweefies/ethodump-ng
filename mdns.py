@@ -13,7 +13,7 @@ import hashlib
 
 from globals import clean_name, Client, ResponseObject, RedirectObject
 from models import samsung_models, apple_models, hp_models, roku_models
-from responses import send_response, send_spotify_response
+from responses import send_airplay_response, send_spotify_response
 
 MDNS_PTR = 12
 MDNS_TXT = 16
@@ -486,14 +486,16 @@ def prepare_redirect(socket: socket.socket, packet: MDNSPacket, own_iface, red_o
     
     if packet.header.num_questions > 0:
         service_name_list = []
-        for i in range(0,packet.header.num_questions):
+        actual_num_questions = len(packet.questions) 
+        for i in range(min(packet.header.num_questions, actual_num_questions)):
             service_name_list.append(packet.questions[i].name.decode('utf-8','ignore'))
         for service_name in service_name_list:
             resp = ResponseObject(hostname, src_mac, src_ip, service_name, srv_port)
+            resp_pkt = None
             if 'spotify' in service_name:
-                resp_pkt = send_spotify_response(resp)
-            else:
-                resp_pkt = send_response(resp)
+                resp_pkt = send_spotify_response(resp, own_iface.mac)
+            elif 'airplay' in service_name:
+                resp_pkt = send_airplay_response(resp)
             if resp_pkt:
                 socket.send(resp_pkt)
 

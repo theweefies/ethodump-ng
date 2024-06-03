@@ -282,6 +282,8 @@ def parse_record(reader: BytesIO, record_type: str=None) -> None | DNSPTR | DNSA
         target = ""
         if data_len > 5:
             data = reader.read(6)
+            if len(data) < 6:
+                return None
             priority, weight, port = struct.unpack('!HHH', data)
             data_len -= 6
             if data_len > 0:

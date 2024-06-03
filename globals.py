@@ -12,12 +12,15 @@ import uuid
 import socket
 import random
 import ipaddress
-import threading
+import string
+import base64
+import hashlib
 import subprocess
 import urllib.request
 from urllib.parse import urlparse, ParseResult
 from urllib.error import URLError
-
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
 import yaml.scanner
 
 ETH_P = b'\x08\x00'
@@ -45,8 +48,10 @@ oui_file = "oui.csv"
 tcp_fp_dbase_list = []
 tcp_fps = {}
 
+http_queue = queue.Queue(1000)
 mdns_queue = queue.Queue(100)
 ssdp_queue = queue.Queue(100)
+
 HOSTNAME = subprocess.getoutput('hostname')
 
 DARK_RED = '\x1b[31m'
@@ -54,8 +59,14 @@ DEFAULT = '\x1b[0m'
 CURSOR_TO_TOP = '\x1b[H'
 CLEAR_SCREEN_CURSOR_TO_TOP = '\x1b[2J\x1b[H'
 
-# Mapping the keys [w,e,r,t,y,u,i,o,p] to numbers [10-18]
+# Mapping keys [w,e,r,t,y,u,i,o,p] to numbers [10-18]
 key_mapping = {'w': 10, 'e': 11, 'r': 12, 't': 13, 'y': 14, 'u': 15, 'i': 16, 'o': 17, 'p': 18}
+
+def generate_sha1_hash(src_mac):
+    sha1_hash = hashlib.sha1(src_mac.encode())
+    sha1_hex = sha1_hash.hexdigest()
+    
+    return sha1_hex
 
 def generate_hex_string(length):
     hex_digits = "0123456789abcdef"
@@ -65,8 +76,48 @@ def generate_hex_string(length):
     
     return hex_string
 
+def generate_random_public_key():
+    # Generate a random 8-byte string and encode it to Base64
+    random_bytes = bytes(random.getrandbits(8) for _ in range(8))
+    public_key = base64.b64encode(random_bytes).decode('utf-8')
+    return public_key
+
+def generate_random_version_code():
+    # Generate random version code in the format: 2.9.0
+    major = 2 #random.randint(1, 9)
+    minor = random.randint(1, 9)
+    patch = random.randint(1, 9)
+    version_code = f"{major}.{minor}.{patch}"
+    return version_code
+
+def generate_random_model_name():
+    # Generate random model name in the format: ls55cg970nnxgo
+    model_name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=14))
+    return model_name
+
+def generate_random_version_string():
+    # Generate random version string in the format: 3.203.233-g11721767
+    major = random.randint(1, 9)
+    minor = random.randint(100, 999)
+    patch = random.randint(100, 999)
+    hash_part = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+    version_string = f"{major}.{minor}.{patch}-g{hash_part}"
+    return version_string
+
 PK = generate_hex_string(64)
+SHORT_PK = generate_random_public_key()
+CID = generate_hex_string(32)
 UUID_K = str(uuid.uuid4())
+VERSION_TRIPLET = generate_random_version_code()
+MODEL_NAME = generate_random_model_name()
+LONG_VERSION = generate_random_version_string()
+
+PRIVATE_KEY_RSA = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048
+    )
+PUBLIC_KEY_RSA = PRIVATE_KEY_RSA.public_key().public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
+PUBLIC_KEY_RSA_B64 = base64.b64encode(PUBLIC_KEY_RSA).decode('utf-8')
 
 def is_self_L2(packet_mac: str, iface_mac: str) -> bool:
     """
@@ -88,6 +139,13 @@ def is_self_L2_L3(packet_mac: str, iface, packet_ip: str) -> bool:
     if packet_mac == iface.mac and packet_ip == iface.ip:
         return True
     else:
+        return False
+
+def is_multicast_or_broadcast_ip(ip: str) -> bool:
+    try:
+        ip_addr = ipaddress.ip_address(ip)
+        return ip_addr.is_multicast or ip == "255.255.255.255"
+    except ValueError:
         return False
 
 def is_multicast_or_broadcast(mac_address: str) -> bool:
@@ -357,8 +415,8 @@ def add_port(dst_port: int, cur_client: Client) -> None:
     """
     Function to add a port number to the client class instance.
     """
-    #if src_port < 5500:
-    cur_client.ports.add(dst_port)
+    if dst_port < 40000:
+        cur_client.ports.add(dst_port)
 
 def add_ttl(ttl: int, cur_client: Client) -> None:
     """
@@ -407,7 +465,7 @@ def check_make_path(dir: str, filename: str) -> str | None:
 
     return os.path.join(new_full_path, filename)
 
-def grab_resource(urn: str, user_agent: str, parsed_urn: ParseResult, lock: threading.Lock):
+def grab_resource(urn: str, user_agent: str, parsed_urn: ParseResult):
     """
     Fetches a resource from the specified URN using a custom User-Agent and saves it to a file.
 
@@ -415,23 +473,23 @@ def grab_resource(urn: str, user_agent: str, parsed_urn: ParseResult, lock: thre
     :param user_agent: The custom User-Agent string to use for the request.
     :param filename: The name of the file where the resource will be saved.
     """
-    with lock:
-        try:
-            # Create a request object with the custom User-Agent
-            req = urllib.request.Request(urn, headers={'User-Agent': user_agent})
+    
+    try:
+        # Create a request object with the custom User-Agent
+        req = urllib.request.Request(urn, headers={'User-Agent': user_agent})
 
-            # Perform the request
-            with urllib.request.urlopen(req) as response:
-                # Read the response
-                content = response.read()
-                if content:
-                    dir_name = parsed_urn.hostname
-                    filename = parsed_urn.path.rstrip('/').split('/')[-1]
-                    abs_path = check_make_path(dir_name, filename)
-                    
-                    # Save the content to a file
-                    with open(abs_path, 'wb') as f:
-                        f.write(content)
-        
-        except URLError:
-            pass
+        # Perform the request
+        with urllib.request.urlopen(req) as response:
+            # Read the response
+            content = response.read()
+            if content:
+                dir_name = parsed_urn.hostname
+                filename = parsed_urn.path.rstrip('/').split('/')[-1]
+                abs_path = check_make_path(dir_name, filename)
+                
+                # Save the content to a file
+                with open(abs_path, 'wb') as f:
+                    f.write(content)
+    
+    except URLError:
+        pass

@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 import re
-import threading
 from urllib.parse import urlparse
 from globals import Client, grab_resource, GENERIC_UPNP_UA
 from models import upnp_useragent_patterns
@@ -31,7 +30,7 @@ def parse_user_agent(user_agent):
     # Return None if no pattern matches
     return None
 
-def parse_ssdp_packet(payload: bytes, cur_client: Client, lock: threading.Lock, grab_resources: bool=False) -> None | SSDP:
+def parse_ssdp_packet(payload: bytes, cur_client: Client, grab_resources: bool=False) -> None | SSDP:
     """
     Function to parse SSDP Notify messages and extract resource
     urls and perform os detection.
@@ -62,7 +61,7 @@ def parse_ssdp_packet(payload: bytes, cur_client: Client, lock: threading.Lock, 
                     if grab_resources and location not in cur_client.resource_urls:
                             parsed_urn = urlparse(location)
                             if parsed_urn:
-                                grab_resource(location, GENERIC_UPNP_UA, parsed_urn, lock)
+                                grab_resource(location, GENERIC_UPNP_UA, parsed_urn)
                     cur_client.resource_urls.add(location)
             if 'SERVER:' in line:
                 server = line.split(': ')[1].strip()

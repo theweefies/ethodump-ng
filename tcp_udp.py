@@ -15,6 +15,7 @@ import time
 
 os_sample_count = {}
 
+ALLOWED_IP = None
 if sys.version_info < (3,):
     compat_ord = ord
 else:
@@ -443,78 +444,7 @@ def checksum(data):
     s = (s >> 16) + (s & 0xffff)
     s += s >> 16
     return ~s & 0xffff
-
-# Crafting the ACK packet
-def create_ack_packet(src_ip, src_port, dst_ip, dst_port, seq_num, ack_num):
-    # IP header fields
-    ip_header = struct.pack(
-        '!BBHHHBBH4s4s', 
-        69, 0, 40, 0, 0, 64, socket.IPPROTO_TCP, 0, socket.inet_aton(dst_ip), socket.inet_aton(src_ip)
-    )
-    
-    # TCP header fields
-    tcp_header = struct.pack(
-        '!HHLLBBHHH', 
-        dst_port, src_port, ack_num, seq_num + 1, 80, 16, 8192, 0, 0
-    )
-    
-    # Calculate the checksum for the TCP segment
-    placeholder = 0
-    protocol = socket.IPPROTO_TCP
-    tcp_length = len(tcp_header)
-    psh = struct.pack(
-        '!4s4sBBH', 
-        socket.inet_aton(dst_ip), socket.inet_aton(src_ip), placeholder, protocol, tcp_length
-    )
-    psh = psh + tcp_header
-    tcp_checksum = checksum(psh)
-    
-    # Recreate the TCP header with the correct checksum
-    tcp_header = struct.pack(
-        '!HHLLBBH', 
-        dst_port, src_port, ack_num, seq_num + 1, 80, 16, 8192
-    ) + struct.pack('H', tcp_checksum) + struct.pack('!H', 0)
-    
-    return ip_header + tcp_header
-
-def start_server(interface, port, allowed_ip):
-    # Create a raw socket to capture packets
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, interface.encode())
-
-    while True:
-        packet, addr = server_socket.recvfrom(65535)
-        ip_header = packet[0:20]
-        iph = struct.unpack('!BBHHHBBH4s4s', ip_header)
-
-        version_ihl = iph[0]
-        ihl = version_ihl & 0xF
-        iph_length = ihl * 4
-
-        ttl, protocol, src_ip, dst_ip = iph[5], iph[6], socket.inet_ntoa(iph[8]), socket.inet_ntoa(iph[9])
-        
-        if src_ip == allowed_ip and protocol == socket.IPPROTO_TCP:
-            tcp_header = packet[iph_length:iph_length+20]
-            tcph = struct.unpack('!HHLLBBHHH', tcp_header)
-            src_port, dst_port, seq, ack_seq, doff_reserved, flags = tcph[0], tcph[1], tcph[2], tcph[3], tcph[4], tcph[5]
-
-            syn_flag = flags & 0x02
-            if syn_flag:
-                print(f"SYN packet from {src_ip}:{src_port}")
-
-                # Create and send an ACK packet
-                ack_packet = create_ack_packet(
-                    src_ip=src_ip,
-                    src_port=src_port,
-                    dst_ip=dst_ip,
-                    dst_port=dst_port,
-                    seq_num=seq,
-                    ack_num=ack_seq
-                )
-                send_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
-                send_socket.sendto(ack_packet, (src_ip, 0))
-                print("ACK packet sent.")
-
+   
 """
 NOTE: PACKET PARSING FUNCTIONS
 """
