@@ -9,11 +9,10 @@ from io import BytesIO
 import socket
 import struct
 import re
-import hashlib
 
 from globals import clean_name, Client, ResponseObject, RedirectObject
 from models import samsung_models, apple_models, hp_models, roku_models
-from responses import send_airplay_response, send_spotify_response
+from responses import send_airplay_response_new, send_spotify_response, send_query
 
 MDNS_PTR = 12
 MDNS_TXT = 16
@@ -478,26 +477,35 @@ def parse_authority(reader: BytesIO) -> MDNSAuthoratativeNameservers | None:
     return MDNSAuthoratativeNameservers(name, type_, class_, ttl, data_len, primary_nameserver, \
                         responsible_authority, serial_number, refresh_interval, retry_interval, expire_limit, min_ttl)
 
-def prepare_redirect(socket: socket.socket, packet: MDNSPacket, own_iface, red_object):
+def prepare_redirect(socket: socket.socket, ip_version: int, dst_mac, dst_ip, packet: MDNSPacket, own_iface, red_object):
     hostname = red_object.hostname
     srv_port = red_object.redirect_port
     src_mac = own_iface.mac
     src_ip = own_iface.ip
+    src_ipv6 = own_iface.ipv6
     
-    if packet.header.num_questions > 0:
+    if packet.header.num_questions > 0 and ip_version != 6 and packet.header.flags == 0:
         service_name_list = []
         actual_num_questions = len(packet.questions) 
         for i in range(min(packet.header.num_questions, actual_num_questions)):
-            service_name_list.append(packet.questions[i].name.decode('utf-8','ignore'))
-        for service_name in service_name_list:
-            resp = ResponseObject(hostname, src_mac, src_ip, service_name, srv_port)
-            resp_pkt = None
-            if 'spotify' in service_name:
-                resp_pkt = send_spotify_response(resp, own_iface.mac)
-            elif 'airplay' in service_name:
-                resp_pkt = send_airplay_response(resp)
-            if resp_pkt:
-                socket.send(resp_pkt)
+            if packet.questions[i].type_ == MDNS_PTR and not packet.questions[i].domain_name:
+                service_name = packet.questions[i].name.decode('utf-8','ignore')
+                unicast = packet.questions[i].qu_bit
+                resp = ResponseObject(ip_version, unicast, hostname, src_mac, src_ip, src_ipv6, dst_mac, dst_ip, service_name, srv_port)
+                resp_pkt = None
+                # query_pkt = None
+                if 'spotify' in service_name:
+                    resp_pkt = send_spotify_response(resp)
+                elif 'google' in service_name:
+                    pass
+                elif 'airplay.' in service_name or 'hap' in service_name or 'raop' in service_name:
+                    resp_pkt = send_airplay_response_new(resp)
+                    #query_pkt = send_query(resp)
+
+                if resp_pkt:
+                    socket.send(resp_pkt)
+                # if query_pkt:
+                #    socket.send(query_pkt)
 
 def parse_mdns_packet(data: bytes) -> MDNSPacket:
     """

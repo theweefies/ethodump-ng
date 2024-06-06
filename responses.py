@@ -9,11 +9,13 @@ import random
 
 from globals import UUID_K, PK, PUBLIC_KEY_RSA_B64, mac_address_to_bytes, ResponseObject, generate_sha1_hash
 from globals import PK, SHORT_PK, CID, VERSION_TRIPLET, LONG_VERSION, HOSTNAME, MODEL_NAME
-from tcp_udp import ip_checksum, udp_checksum, create_udp_header
+from tcp_udp import ip_checksum, udp_checksum, create_udp_header, udp_ipv6_checksum
 from igmp import calculate_igmp_checksum
 
 MULTICAST_IP = '224.0.0.251'
 MULTICAST_MAC = '01:00:5e:00:00:fb'
+IPV6_MULTICAST_IP = 'ff02::fb'
+IPV6_MULTICAST_MAC = '33:33:00:00:00:fb'
 UDP_HEADER_LEN = 8
 IP_HEADER_LEN = 20
 
@@ -152,13 +154,44 @@ def encode_mdns_name(name):
     encoded_parts = [len(part).to_bytes(1, 'big') + part.encode() for part in parts]
     return b''.join(encoded_parts) + b'\x00'
 
-def send_spotify_response(resp: ResponseObject, mac):
+def encode_mdns_name_new(name, packet):
+    labels = name.split('.')
+    encoded_name = b''
+    remaining_labels = labels.copy()
+
+    while remaining_labels:
+        for i in range(len(remaining_labels)):
+            name_part = remaining_labels[i:]
+            # Encode the name part to search in the packet
+            search_part = b''.join(struct.pack('!B', len(label)) + label.encode() for label in name_part) #+ b'\x00'
+            
+            offset = packet.find(search_part)
+            if offset != -1:
+                # Add the unmatched labels followed by the pointer
+                for label in labels[:i]:
+                    encoded_name += struct.pack('!B', len(label)) + label.encode()
+                pointer = 0xC000 | offset
+                encoded_name += struct.pack('!H', pointer)
+                return encoded_name
+        
+        # If no match is found, encode the current label
+        encoded_name += struct.pack('!B', len(remaining_labels[0])) + remaining_labels[0].encode('utf-8')
+        remaining_labels.pop(0)
+    
+    # Add the null-terminating byte at the end if no pointer was used
+    encoded_name += b'\x00'
+    return encoded_name
+
+def send_spotify_response(resp: ResponseObject):
     service_name = resp.service
     src_mac = resp.src_mac
     src_ip = resp.src_ip
+    src_ipv6 = resp.src_ipv6
     srv_port = resp.srv_port
     hostname = resp.hostname
-    SHA1_HASH = generate_sha1_hash(mac)
+    ip_version = resp.type_
+
+    SHA1_HASH = generate_sha1_hash(src_mac)
 
     # mdns payload
     transaction_id = b'\x00\x00'
@@ -245,33 +278,312 @@ def send_spotify_response(resp: ResponseObject, mac):
     mdns_payload = transaction_id + flags + questions + answer_rrs + authority_rrs + additional_rrs + spotify_ptr_record + a_record + txt_record_spotify + srv_record_spotify + nsec_a_record + nsec_srv_txt_spotify_record
     mdns_len = len(mdns_payload)
 
-    # ethernet header
-    multicast_mac = mac_address_to_bytes(MULTICAST_MAC)
-    src_mac = mac_address_to_bytes(src_mac)
-    eth_header = struct.pack("!6s6sH", multicast_mac, src_mac, 0x0800)
+    if ip_version == 4:
+        # ethernet header
+        src_mac = mac_address_to_bytes(src_mac)
+        eth_type = 0x0800
+        dst_mac = MULTICAST_MAC
+        multicast_mac = mac_address_to_bytes(dst_mac)
+        eth_header = struct.pack("!6s6sH", multicast_mac, src_mac, eth_type)
 
-    # ip header
-    multicast_ip = MULTICAST_IP
-    ver_header_len = 69 # version 4 + header length 20 (5)
-    dsf = 0 # DSF
-    identification = random.randint(0, 0xFFFF)
-    ip_header_len = IP_HEADER_LEN
-    udp_header_len = UDP_HEADER_LEN
-    ttl = 255
-    ip_proto_udp = 17
-    flags_fragment_offset = 0
-    checksum = 0
+        # ip header
+        multicast_ip = MULTICAST_IP
+        ver_header_len = 69 # version 4 + header length 20 (5)
+        dsf = 0 # DSF
+        identification = random.randint(0, 0xFFFF)
+        ip_header_len = IP_HEADER_LEN
+        udp_header_len = UDP_HEADER_LEN
+        ttl = 255
+        ip_proto_udp = 17
+        flags_fragment_offset = 0
+        checksum = 0
 
-    # udp header
-    header_without_checksum = struct.pack('!BBHHHBBH4s4s', ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, checksum, socket.inet_aton(src_ip), socket.inet_aton(multicast_ip))
+        # udp header
+        header_without_checksum = struct.pack('!BBHHHBBH4s4s', ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, checksum, socket.inet_aton(src_ip), socket.inet_aton(multicast_ip))
 
-    calculated_checksum = ip_checksum(header_without_checksum)
+        calculated_checksum = ip_checksum(header_without_checksum)
 
-    ip_header = struct.pack("!BBHHHBBH4s4s", ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, calculated_checksum, socket.inet_aton(src_ip), socket.inet_aton(multicast_ip))
+        ip_header = struct.pack("!BBHHHBBH4s4s", ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, calculated_checksum, socket.inet_aton(src_ip), socket.inet_aton(multicast_ip))
 
-    udp_header = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, 0)
-    checksum = udp_checksum(src_ip, multicast_ip, UDP_HEADER_LEN + mdns_len, udp_header, mdns_payload)
-    udp_header_with_checksum = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, checksum)
+        udp_header = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, 0)
+        checksum = udp_checksum(src_ip, multicast_ip, UDP_HEADER_LEN + mdns_len, udp_header, mdns_payload)
+        udp_header_with_checksum = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, checksum)
+        
+    elif ip_version == 6 and src_ipv6:
+        # ethernet header
+        src_mac = mac_address_to_bytes(src_mac)
+        eth_type = 0x86dd
+        dst_mac = IPV6_MULTICAST_MAC
+        multicast_mac = mac_address_to_bytes(dst_mac)
+        eth_header = struct.pack("!6s6sH", multicast_mac, src_mac, eth_type)
+
+        # ip header
+        multicast_ip = IPV6_MULTICAST_IP
+        src_ip_bytes = socket.inet_pton(socket.AF_INET6, src_ipv6)
+        dst_ip_bytes = socket.inet_pton(socket.AF_INET6, multicast_ip)
+        version = 6 << 28
+        traffic_class = 0 << 20
+        flow_label = 0xd0200
+        payload_len = UDP_HEADER_LEN + mdns_len
+        next_header = socket.IPPROTO_UDP
+        hop_limit = 255
+
+        ip_header = struct.pack("!4sHBB16s16s", struct.pack("!I", version | (traffic_class << 20) | flow_label), payload_len, next_header, hop_limit, src_ip_bytes, dst_ip_bytes)
+
+        udp_header = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, 0)
+        checksum = udp_ipv6_checksum(src_ipv6, multicast_ip, UDP_HEADER_LEN + mdns_len, udp_header, mdns_payload)
+        udp_header_with_checksum = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, checksum)
+    
+    else:
+        return None
+
+    pkt = eth_header + ip_header + udp_header_with_checksum + mdns_payload
+    
+    return pkt
+
+def send_airplay_response_new(resp: ResponseObject):
+    hostname = resp.hostname
+    service_name = resp.service
+    src_ip = resp.src_ip
+    src_ipv6 = resp.src_ipv6
+    src_mac = resp.src_mac
+    srv_port = resp.srv_port
+    ip_version = resp.type_
+    is_unicast = resp.unicast
+
+    top_level_name = hostname
+    domain_name = hostname + '.local'
+    full_name = top_level_name + '.' + service_name + '.local'
+    name_field = service_name
+
+    mdns_payload = b''
+    # mdns payload
+    mdns_payload += b'\x00\x00'     # transaction id
+    mdns_payload += b'\x84\x00'              # flags
+    mdns_payload += b'\x00\x00'          # questions
+    mdns_payload += b'\x00\x01'         # answer_rrs
+    mdns_payload += b'\x00\x00'      # authority_rrs
+    if is_unicast == 0:              
+        mdns_payload += b'\x00\x06'  # additional rrs
+    elif is_unicast == 1:
+        mdns_payload += b'\x00\x04'
+
+    ######################### PTR RECORD ############################
+    mdns_payload += encode_mdns_name_new(name_field, mdns_payload)  # service name field
+    mdns_payload += struct.pack('!H', MDNS_PTR)                     # type 
+    mdns_payload += b'\x00\x01'                                     # class
+    mdns_payload += struct.pack('!I', 4500)                         # ttl
+
+    temp_payload = mdns_payload + b'\x00\x00'
+    encoded_full_name = encode_mdns_name_new(full_name, temp_payload)
+    data_len = len(encoded_full_name)
+    mdns_payload += int(data_len).to_bytes(2, 'big')                # rdata_len field
+    mdns_payload += encoded_full_name                               # domain name
+    
+    ######################## MDNS TXT RECORD ########################
+    mdns_payload += encode_mdns_name_new(full_name, mdns_payload)   # hostname + service name
+    mdns_payload += struct.pack('!H', MDNS_TXT)                     # type
+    mdns_payload += b'\x80\x01'                                     # class
+    mdns_payload += struct.pack('!I', 4500)                         # ttl
+
+    device_id = src_mac.upper()
+    psi_mac = src_mac.replace(':','').upper()    
+
+    txt_acl = "acl=0".encode()
+    txt_acl_len = struct.pack('!B',len(txt_acl))
+    txt_deviceid = f"deviceid={device_id}".encode()
+    txt_deviceid_len = struct.pack('!B',len(txt_deviceid))
+    txt_features = "features=0x7F8AD0,0x38BCF46".encode()
+    txt_features_len = struct.pack('!B',len(txt_features))
+    txt_fex = "fex=0Ip/AEbPiwNACA".encode()
+    txt_fex_len = struct.pack('!B',len(txt_fex))
+    txt_rsf = "rsf=0x3".encode()
+    txt_rsf_len = struct.pack('!B',len(txt_rsf))
+    txt_fv = "fv=p20.10.00.4102".encode()
+    txt_fv_len = struct.pack('!B',len(txt_fv))
+    txt_at = "at=0x1".encode()
+    txt_at_len = struct.pack('!B',len(txt_at))
+    txt_flags = "flags=0x244".encode()
+    txt_flags_len = struct.pack('!B',len(txt_flags))
+    txt_model = "model=appletv6,2".encode()
+    txt_model_len = struct.pack('!B',len(txt_model))
+    txt_integrator = "integrator=sony_tv".encode()
+    txt_integrator_len = struct.pack('!B',len(txt_integrator))
+    txt_manufacturer = "manufacturer=Sony".encode()
+    txt_manufacturer_len = struct.pack('!B',len(txt_manufacturer))
+    txt_serial_number = f"serialNumber={UUID_K}".encode()
+    txt_serial_number_len = struct.pack('!B',len(txt_serial_number))
+    txt_protovers = "protovers=1.1".encode()
+    txt_protovers_len = struct.pack('!B',len(txt_protovers))
+    txt_srcvers = "srcvers=377.40.00".encode()
+    txt_srcvers_len = struct.pack('!B',len(txt_srcvers))
+    txt_pi = f"pi={device_id}".encode()
+    txt_pi_len = struct.pack('!B',len(txt_pi))
+    txt_psi = f"psi=00000000-0000-0000-0000-{psi_mac}".encode()
+    txt_psi_len = struct.pack('!B',len(txt_psi))
+    txt_gid = f"gid=00000000-0000-0000-0000-{psi_mac}".encode()
+    txt_gid_len = struct.pack('!B',len(txt_gid))
+    txt_gcgl = "gcgl=0".encode()
+    txt_gcgl_len = struct.pack('!B',len(txt_gcgl))
+    txt_pk = f"pk={PK}".encode()
+    txt_pk_len = struct.pack('!B',len(txt_pk))
+
+    txt_payload = txt_acl_len + txt_acl + txt_deviceid_len + txt_deviceid + txt_features_len + txt_features + txt_fex_len + txt_fex +\
+        txt_rsf_len + txt_rsf + txt_fv_len + txt_fv + txt_at_len + txt_at + txt_flags_len + txt_flags + txt_model_len + txt_model +\
+        txt_integrator_len + txt_integrator + txt_manufacturer_len + txt_manufacturer + txt_serial_number_len + txt_serial_number +\
+        txt_protovers_len + txt_protovers + txt_srcvers_len + txt_srcvers + txt_pi_len + txt_pi + txt_psi_len + txt_psi + txt_gid_len +\
+        txt_gid + txt_gcgl_len + txt_gcgl + txt_pk_len + txt_pk
+
+    txt_payload_len = struct.pack('!H', len(txt_payload))
+    
+    mdns_payload += txt_payload_len                               # TXT payload len
+    mdns_payload += txt_payload                                   # TXT payload
+
+    ################## MDNS SRV RECORD ############################
+    mdns_payload += encode_mdns_name_new(full_name, mdns_payload) # hostname + service name
+    mdns_payload += struct.pack('!H', MDNS_SRV)                   # SRV Type
+    mdns_payload += b'\x80\x01'                                   # Class (CF/IN)
+    mdns_payload += struct.pack('!I', 120)                        # ttl
+
+    priority = struct.pack('!H', 0)                               # priority
+    weight = struct.pack('!H', 0)                                 # weight
+    port = struct.pack('!H', srv_port)                            # port
+    
+    temp_payload = mdns_payload + b'\x00\x00' + priority + weight + port
+    target = encode_mdns_name_new(domain_name, temp_payload)      # target
+
+    srv_data = priority + weight + port + target
+    srv_data_len = struct.pack('!H', len(srv_data))               # RDATA length
+
+    mdns_payload = mdns_payload + srv_data_len + srv_data
+
+    ####################### MDNS A RECORD #########################
+    mdns_payload += encode_mdns_name_new(domain_name, mdns_payload)    # A name
+    mdns_payload += struct.pack('!H', MDNS_A)                     # Type
+    mdns_payload += b'\x80\x01'                                   # Class (CF/IN)
+    mdns_payload += struct.pack('!I', 120)                        # ttl
+
+    ip_bytes = socket.inet_aton(src_ip)
+    a_data_len = struct.pack('!H', len(ip_bytes))
+
+    mdns_payload += a_data_len                                    # RDATA len
+    mdns_payload += ip_bytes                                      # IPv4
+
+    ##################### MDNS AAAA RECORD ##########################
+    mdns_payload += encode_mdns_name_new(domain_name, mdns_payload) # AAAA Name
+    mdns_payload += struct.pack('!H', MDNS_AAAA)                    # Type
+    mdns_payload += b'\x80\x01'                                     # Class
+    mdns_payload += struct.pack('!I', 120)                          # ttl
+
+    ip_bytes = socket.inet_pton(socket.AF_INET6, src_ipv6)
+    aaaa_data_len = struct.pack('!H', len(ip_bytes))
+
+    mdns_payload += aaaa_data_len                                   # RDATA len
+    mdns_payload += ip_bytes                                        # IPv6
+
+    if is_unicast == 0:
+        ###################### MDNS NSEC RECORD #########################
+        nsec_name = encode_mdns_name_new(domain_name, mdns_payload)  
+        mdns_payload += nsec_name                                       # NSEC Name
+        mdns_payload += struct.pack('!H', MDNS_NSEC)                    # Type
+        mdns_payload += b'\x80\x01'                                     # Class (CF/IN)
+        mdns_payload += struct.pack('!I', 120)                          # ttl
+
+        #nsec_bitmap = b'\x00\x04\x40\x00\x00\x00'# without AAAA
+        nsec_bitmap = b'\x00\x04\x40\x00\x00\x08'
+        nsec_data_len = struct.pack('!H',len(nsec_name) + len(nsec_bitmap))
+
+        mdns_payload += nsec_data_len                                   # RDATA len
+        mdns_payload += encode_mdns_name_new(domain_name, mdns_payload) # NSEC Name
+        mdns_payload += nsec_bitmap                                     # NSEC bitmap
+
+        ###################### MDNS NSEC RECORD #########################
+        nsec_name = encode_mdns_name_new(full_name, mdns_payload)
+        mdns_payload += nsec_name                                       # NSEC Name
+        mdns_payload += struct.pack('!H', MDNS_NSEC)                    # Type
+        mdns_payload += b'\x80\x01'                                     # Class (CF/IN)
+        mdns_payload += struct.pack('!I', 4500)                         # ttl
+
+        nsec_bitmap = b'\x00\x05\x00\x00\x80\x00\x40'
+        nsec_data_len = struct.pack('!H',len(nsec_name) + len(nsec_bitmap))
+
+        mdns_payload += nsec_data_len                                   # RDATA len
+        mdns_payload += encode_mdns_name_new(full_name, mdns_payload)   # NSEC Name
+        mdns_payload += nsec_bitmap
+
+    ################ BUILD MDNS PAYLOAD ##################
+    mdns_len = len(mdns_payload)
+
+    if ip_version == 4:
+        # ethernet header
+        src_mac = mac_address_to_bytes(src_mac)
+        eth_type = 0x0800
+        if is_unicast == 0:
+            dst_mac = mac_address_to_bytes(MULTICAST_MAC)
+        elif is_unicast == 1:
+            dst_mac = mac_address_to_bytes(resp.dst_mac)
+        eth_header = struct.pack("!6s6sH", dst_mac, src_mac, eth_type)
+
+        # ip header
+        if is_unicast == 0:
+            dst_ip = MULTICAST_IP
+        elif is_unicast == 1:
+            dst_ip = resp.dst_ip
+
+        ver_header_len = 69 # version 4 + header length 20 (5)
+        dsf = 0 # DSF
+        identification = random.randint(0, 0xFFFF)
+        ip_header_len = IP_HEADER_LEN
+        udp_header_len = UDP_HEADER_LEN
+        ttl = 255
+        ip_proto_udp = 17
+        flags_fragment_offset = 0x4000
+        checksum = 0
+
+        # udp header
+        header_without_checksum = struct.pack('!BBHHHBBH4s4s', ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, checksum, socket.inet_aton(src_ip), socket.inet_aton(dst_ip))
+
+        calculated_checksum = ip_checksum(header_without_checksum)
+
+        ip_header = struct.pack("!BBHHHBBH4s4s", ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, calculated_checksum, socket.inet_aton(src_ip), socket.inet_aton(dst_ip))
+
+        udp_header = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, 0)
+        checksum = udp_checksum(src_ip, dst_ip, UDP_HEADER_LEN + mdns_len, udp_header, mdns_payload)
+        udp_header_with_checksum = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, checksum)
+
+    elif ip_version == 6 and src_ipv6:
+        # ethernet header
+        src_mac = mac_address_to_bytes(src_mac)
+        eth_type = 0x86dd
+        if is_unicast == 0:
+            dst_mac = mac_address_to_bytes(IPV6_MULTICAST_MAC)
+        elif is_unicast == 1:
+            dst_mac = mac_address_to_bytes(resp.dst_mac)
+        eth_header = struct.pack("!6s6sH", dst_mac, src_mac, eth_type)
+
+        # ip header
+        if is_unicast == 0:
+            dst_ip = IPV6_MULTICAST_IP
+        elif is_unicast == 1:
+            dst_ip = resp.dst_ip
+
+        src_ip_bytes = socket.inet_pton(socket.AF_INET6, src_ipv6)
+        dst_ip_bytes = socket.inet_pton(socket.AF_INET6, dst_ip)
+        version = 6 << 28
+        traffic_class = 0 << 20
+        flow_label = 0xd0200
+        payload_len = UDP_HEADER_LEN + mdns_len
+        next_header = socket.IPPROTO_UDP
+        hop_limit = 255
+
+        ip_header = struct.pack("!4sHBB16s16s", struct.pack("!I", version | (traffic_class << 20) | flow_label), payload_len, next_header, hop_limit, src_ip_bytes, dst_ip_bytes)
+
+        udp_header = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, 0)
+        checksum = udp_ipv6_checksum(src_ipv6, dst_ip, UDP_HEADER_LEN + mdns_len, udp_header, mdns_payload)
+        udp_header_with_checksum = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, checksum)
+
+    else:
+        return None
 
     pkt = eth_header + ip_header + udp_header_with_checksum + mdns_payload
 
@@ -281,8 +593,11 @@ def send_airplay_response(resp: ResponseObject):
     hostname = resp.hostname
     service_name = resp.service
     src_ip = resp.src_ip
+    src_ipv6 = resp.src_ipv6
     src_mac = resp.src_mac
     srv_port = resp.srv_port
+    ip_version = resp.type_
+    is_unicast = resp.unicast
 
     top_level_name = hostname
     domain_name = encode_mdns_name(hostname + '.local')
@@ -295,11 +610,14 @@ def send_airplay_response(resp: ResponseObject):
     questions = b'\x00\x00'
     answer_rrs = b'\x00\x01'
     authority_rrs = b'\x00\x00'
-    additional_rrs = b'\x00\x06'
+    if is_unicast == 0:
+        additional_rrs = b'\x00\x06'
+    elif is_unicast == 1:
+        additional_rrs = b'\x00\x04'
 
     ################ PTR RECORD ##################
     type_ = struct.pack('!H', MDNS_PTR)
-    class_ = b'\x80\x01'
+    class_ = b'\x00\x01'
     time_to_live = struct.pack('!I', 4500)
 
     data_len = len(full_name) + 2
@@ -380,22 +698,10 @@ def send_airplay_response(resp: ResponseObject):
     class_ = b'\x80\x01'
     time_to_live = struct.pack('!I', 120)
 
-    ip_bytes = socket.inet_pton(socket.AF_INET6, "fe80::b2e4:5cff:fe88:dcf3")
+    ip_bytes = socket.inet_pton(socket.AF_INET6, src_ipv6)
     aaaa_data_len = struct.pack('!H', len(ip_bytes))
 
     aaaa_record = aaaa_name + type_ + class_ + time_to_live + aaaa_data_len + ip_bytes
-
-    """################## MDNS TXT RECORD ###################
-    type_ = struct.pack('!H', MDNS_TXT)
-    class_ = b'\x80\x01'
-    time_to_live = struct.pack('!I', 4500)
-
-    txt_cpath = "CPath=/zc".encode()
-    txt_cpath_len = struct.pack('!B',len(txt_cpath))
-
-    txt_payload = txt_cpath_len + txt_cpath
-    txt_payload_len = struct.pack('!H', len(txt_payload))
-    txt_record = full_name + type_ + class_ + time_to_live + txt_payload_len + txt_payload"""
 
     ################## MDNS SRV RECORD ###################
     type_ = struct.pack('!H', MDNS_SRV)
@@ -417,7 +723,7 @@ def send_airplay_response(resp: ResponseObject):
     class_ = b'\x80\x01'
     time_to_live = struct.pack('!I', 120)
 
-    # nsec_bitmap = b'\x00\x04\x40\x00\x00\x00'
+    #nsec_bitmap = b'\x00\x04\x40\x00\x00\x00'# without AAAA
     nsec_bitmap = b'\x00\x04\x40\x00\x00\x08'
     nsec_data_len = struct.pack('!H',len(nsec_name) + len(nsec_bitmap))
 
@@ -434,38 +740,148 @@ def send_airplay_response(resp: ResponseObject):
     nsec_srv_txt_record = full_name + type_ + class_ + time_to_live + nsec_data_len + full_name + nsec_bitmap
 
     ################ BUILD MDNS PAYLOAD ##################
-    mdns_payload = transaction_id + flags + questions + answer_rrs + authority_rrs + additional_rrs + ptr_record + a_record + aaaa_record + txt_record + srv_record + nsec_a_record + nsec_srv_txt_record
+    if is_unicast == 0:
+        mdns_payload = transaction_id + flags + questions + answer_rrs + authority_rrs + additional_rrs + ptr_record + a_record + aaaa_record + txt_record + srv_record + nsec_a_record + nsec_srv_txt_record
+    elif is_unicast == 1:
+        mdns_payload = transaction_id + flags + questions + answer_rrs + authority_rrs + additional_rrs + ptr_record + txt_record + srv_record + a_record + aaaa_record
+    
     mdns_len = len(mdns_payload)
 
-    # ethernet header
-    multicast_mac = mac_address_to_bytes(MULTICAST_MAC)
-    src_mac = mac_address_to_bytes(src_mac)
-    eth_header = struct.pack("!6s6sH", multicast_mac, src_mac, 0x0800)
+    if ip_version == 4:
+        # ethernet header
+        src_mac = mac_address_to_bytes(src_mac)
+        eth_type = 0x0800
+        if is_unicast == 0:
+            dst_mac = mac_address_to_bytes(MULTICAST_MAC)
+        elif is_unicast == 1:
+            dst_mac = mac_address_to_bytes(resp.dst_mac)
+        eth_header = struct.pack("!6s6sH", dst_mac, src_mac, eth_type)
 
-    # ip header
-    multicast_ip = MULTICAST_IP
-    ver_header_len = 69 # version 4 + header length 20 (5)
-    dsf = 0 # DSF
-    identification = random.randint(0, 0xFFFF)
-    ip_header_len = IP_HEADER_LEN
-    udp_header_len = UDP_HEADER_LEN
-    ttl = 255
-    ip_proto_udp = 17
-    flags_fragment_offset = 0
-    checksum = 0
+        # ip header
+        if is_unicast == 0:
+            dst_ip = MULTICAST_IP
+        elif is_unicast == 1:
+            dst_ip = resp.dst_ip
 
-    # udp header
-    header_without_checksum = struct.pack('!BBHHHBBH4s4s', ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, checksum, socket.inet_aton(src_ip), socket.inet_aton(multicast_ip))
+        ver_header_len = 69 # version 4 + header length 20 (5)
+        dsf = 0 # DSF
+        identification = random.randint(0, 0xFFFF)
+        ip_header_len = IP_HEADER_LEN
+        udp_header_len = UDP_HEADER_LEN
+        ttl = 255
+        ip_proto_udp = 17
+        flags_fragment_offset = 0x4000
+        checksum = 0
 
-    calculated_checksum = ip_checksum(header_without_checksum)
+        # udp header
+        header_without_checksum = struct.pack('!BBHHHBBH4s4s', ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, checksum, socket.inet_aton(src_ip), socket.inet_aton(dst_ip))
 
-    ip_header = struct.pack("!BBHHHBBH4s4s", ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, calculated_checksum, socket.inet_aton(src_ip), socket.inet_aton(multicast_ip))
+        calculated_checksum = ip_checksum(header_without_checksum)
 
-    udp_header = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, 0)
-    checksum = udp_checksum(src_ip, multicast_ip, UDP_HEADER_LEN + mdns_len, udp_header, mdns_payload)
-    udp_header_with_checksum = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, checksum)
+        ip_header = struct.pack("!BBHHHBBH4s4s", ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, calculated_checksum, socket.inet_aton(src_ip), socket.inet_aton(dst_ip))
+
+        udp_header = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, 0)
+        checksum = udp_checksum(src_ip, dst_ip, UDP_HEADER_LEN + mdns_len, udp_header, mdns_payload)
+        udp_header_with_checksum = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, checksum)
+
+    elif ip_version == 6 and src_ipv6:
+        # ethernet header
+        src_mac = mac_address_to_bytes(src_mac)
+        eth_type = 0x86dd
+        if is_unicast == 0:
+            dst_mac = mac_address_to_bytes(IPV6_MULTICAST_MAC)
+        elif is_unicast == 1:
+            dst_mac = mac_address_to_bytes(resp.dst_mac)
+        eth_header = struct.pack("!6s6sH", dst_mac, src_mac, eth_type)
+
+        # ip header
+        if is_unicast == 0:
+            dst_ip = IPV6_MULTICAST_IP
+        elif is_unicast == 1:
+            dst_ip = resp.dst_ip
+
+        src_ip_bytes = socket.inet_pton(socket.AF_INET6, src_ipv6)
+        dst_ip_bytes = socket.inet_pton(socket.AF_INET6, dst_ip)
+        version = 6 << 28
+        traffic_class = 0 << 20
+        flow_label = 0xd0200
+        payload_len = UDP_HEADER_LEN + mdns_len
+        next_header = socket.IPPROTO_UDP
+        hop_limit = 255
+
+        ip_header = struct.pack("!4sHBB16s16s", struct.pack("!I", version | (traffic_class << 20) | flow_label), payload_len, next_header, hop_limit, src_ip_bytes, dst_ip_bytes)
+
+        udp_header = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, 0)
+        checksum = udp_ipv6_checksum(src_ipv6, dst_ip, UDP_HEADER_LEN + mdns_len, udp_header, mdns_payload)
+        udp_header_with_checksum = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, checksum)
+
+    else:
+        return None
 
     pkt = eth_header + ip_header + udp_header_with_checksum + mdns_payload
+
+    return pkt
+
+def send_query(resp: ResponseObject):
+    service_name = resp.service
+    src_ip = resp.src_ip
+    src_mac = resp.src_mac
+    ip_version = resp.type_
+
+    name_field = encode_mdns_name(service_name)
+
+    # mdns payload
+    transaction_id = b'\x00\x00'
+    flags = b'\x84\x00'
+    questions = b'\x00\x01'
+    answer_rrs = b'\x00\x00'
+    authority_rrs = b'\x00\x00'
+    additional_rrs = b'\x00\x00'
+
+    ################ PTR RECORD ##################
+    type_ = struct.pack('!H', MDNS_PTR)
+    class_ = b'\x00\x01'
+
+    ptr_record = name_field + type_ + class_
+
+    mdns_payload = transaction_id + flags + questions + answer_rrs + authority_rrs + additional_rrs + ptr_record
+    mdns_len = len(mdns_payload)
+
+    if ip_version == 4:
+        # ethernet header
+        src_mac = mac_address_to_bytes(src_mac)
+        eth_type = 0x0800
+        dst_mac = MULTICAST_MAC
+        multicast_mac = mac_address_to_bytes(dst_mac)
+        eth_header = struct.pack("!6s6sH", multicast_mac, src_mac, eth_type)
+
+        # ip header
+        multicast_ip = MULTICAST_IP
+        ver_header_len = 69 # version 4 + header length 20 (5)
+        dsf = 0 # DSF
+        identification = random.randint(0, 0xFFFF)
+        ip_header_len = IP_HEADER_LEN
+        udp_header_len = UDP_HEADER_LEN
+        ttl = 255
+        ip_proto_udp = 17
+        flags_fragment_offset = 0
+        checksum = 0
+
+        # udp header
+        header_without_checksum = struct.pack('!BBHHHBBH4s4s', ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, checksum, socket.inet_aton(src_ip), socket.inet_aton(multicast_ip))
+
+        calculated_checksum = ip_checksum(header_without_checksum)
+
+        ip_header = struct.pack("!BBHHHBBH4s4s", ver_header_len, dsf, ip_header_len + udp_header_len + mdns_len, identification, flags_fragment_offset, ttl, ip_proto_udp, calculated_checksum, socket.inet_aton(src_ip), socket.inet_aton(multicast_ip))
+
+        udp_header = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, 0)
+        checksum = udp_checksum(src_ip, multicast_ip, UDP_HEADER_LEN + mdns_len, udp_header, mdns_payload)
+        udp_header_with_checksum = create_udp_header(5353, 5353, UDP_HEADER_LEN + mdns_len, checksum)
+
+        pkt = eth_header + ip_header + udp_header_with_checksum + mdns_payload
+
+    else:
+        return None
 
     return pkt
 

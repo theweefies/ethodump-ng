@@ -384,6 +384,20 @@ def tcp_ip_fingerprint(pkt, ip_header: IPHeader, tcp_header: TCPHeader, cur_clie
 NOTE: PACKET CREATION FUNCTIONS
 """
 
+def create_ipv6_pseudo_header(src_ip, dst_ip, payload_len, next_header):
+    try:
+        src_ip_bytes = socket.inet_pton(socket.AF_INET6, src_ip)
+        dst_ip_bytes = socket.inet_pton(socket.AF_INET6, dst_ip)
+    except OSError as e:
+        return None
+    return struct.pack('!16s16sI3xB', src_ip_bytes, dst_ip_bytes, payload_len, next_header)
+
+def udp_ipv6_checksum(src_ip, dest_ip, udp_len, udp_header, payload):
+    pseudo_header = create_ipv6_pseudo_header(src_ip, dest_ip, udp_len, socket.IPPROTO_UDP)
+    if len(payload) % 2:
+        payload += b'\0'
+    return ip_checksum(pseudo_header + udp_header + payload)
+
 def ip_checksum(ip_header):
     assert len(ip_header) % 2 == 0, "Header length must be even."
 

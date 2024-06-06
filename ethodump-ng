@@ -48,6 +48,7 @@ class Interface:
     interface_name = None
     mac = None
     ip = None
+    ipv6 = None
     gateway = None
 
     def __init__(self, name: str):
@@ -70,8 +71,21 @@ class Interface:
         Method to retrieve layer 2 and 3 addressing from specified interface.
         """
         try:
-            self.mac = netifaces.ifaddresses(self.interface_name)[netifaces.AF_LINK][0]['addr']
-            self.ip = netifaces.ifaddresses(self.interface_name)[netifaces.AF_INET][0]['addr']
+            if netifaces.AF_LINK in netifaces.ifaddresses(self.interface_name):
+                self.mac = netifaces.ifaddresses(self.interface_name)[netifaces.AF_LINK][0]['addr']
+            if netifaces.AF_INET in netifaces.ifaddresses(self.interface_name):
+                self.ip = netifaces.ifaddresses(self.interface_name)[netifaces.AF_INET][0]['addr']
+            if netifaces.AF_INET6 in netifaces.ifaddresses(self.interface_name):
+                ipv6_info = netifaces.ifaddresses(self.interface_name)[netifaces.AF_INET6]
+                self.ipv6 = None
+                for addr_info in ipv6_info:
+                    ipv6_addr = addr_info.get('addr')
+                    if ipv6_addr:
+                        if '%' in ipv6_addr:
+                            self.ipv6 = ipv6_addr.split('%')[0]
+                        else:
+                            self.ipv6 = ipv6_addr
+                        break
         except Exception:
             print('[!] ERROR: Please check the interface name and try again.')
             sys.exit(0)
@@ -373,7 +387,7 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     else:
                         process_mdns_packet(mdns_packet, cur_client)
                         if TARGET_IP and ip_header.src_ip == TARGET_IP:
-                            mdns_queue.put(mdns_packet)
+                            mdns_queue.put((4,mdns_packet, eth_header.src_mac, ip_header.src_ip))
                     cur_client.protocols.add('MDNS')
                     return
                 
@@ -478,7 +492,10 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     mdns_packet = parse_mdns_packet(payload)
                     if not mdns_packet:
                         write_packet(p, "ethodebug.pcap")
-                    process_mdns_packet(mdns_packet, cur_client)
+                    else:
+                        process_mdns_packet(mdns_packet, cur_client)
+                        if TARGET_IP and cur_client.ip_address and cur_client.ip_address == TARGET_IP:
+                            mdns_queue.put((6,mdns_packet, eth_header.src_mac, ipv6_header.src_ipv6))
                     cur_client.protocols.add('MDNSv6')
                     return
 
@@ -708,8 +725,8 @@ def mdns_redirect(own_iface: Interface, red_object: RedirectObject) -> None:
 
     while not flags.exit_flag:
         try:
-            pkt = mdns_queue.get(timeout=1)
-            prepare_redirect(mdns_socket, pkt, own_iface, red_object)
+            ipv, pkt, dst_mac, dst_ip = mdns_queue.get(timeout=1)
+            prepare_redirect(mdns_socket, ipv, dst_mac, dst_ip, pkt, own_iface, red_object)
             mdns_queue.task_done()
             
             # Calculate the elapsed time

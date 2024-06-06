@@ -303,12 +303,17 @@ class ResponseObject:
     """
     An object class to hold data required for response packets.
     """
-    def __init__(self, hostname, src_mac, src_ip, service, srv_port):
+    def __init__(self, type_ , unicast, hostname, src_mac, src_ip, src_ipv6, dst_mac, dst_ip, service, srv_port):
         self.hostname = hostname
         self.src_mac = src_mac
         self.src_ip = src_ip
+        self.src_ipv6 = src_ipv6
         self.srv_port = srv_port if srv_port else 7000
         self.service = service
+        self.type_ = type_
+        self.unicast = unicast
+        self.dst_mac = dst_mac
+        self.dst_ip = dst_ip
 
 class Flags:
     """

@@ -11,6 +11,7 @@ import base64
 import binascii
 from urllib.parse import urlparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.client import HTTPMessage, parse_headers
 from globals import grab_resource, GENERIC_UPNP_UA, check_make_path, HOSTNAME
 from models import apple_models, banner_signatures
 from responses import spotify_get_response, final_spotify_post_response, youtube_get_response
@@ -277,6 +278,84 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args) -> None:
         return #super().log_message(format, *args)
+    
+    def handle_one_request(self):
+        """Handle a single HTTP request, overridden to support RTSP."""
+        try:
+            self.raw_requestline = self.rfile.readline(65537)
+            if len(self.raw_requestline) > 65536:
+                self.requestline = ''
+                self.request_version = ''
+                self.command = ''
+                self.send_error(414)
+                return
+            
+            if not self.raw_requestline:
+                self.close_connection = True
+                return
+            
+            if not self.parse_request():
+                return
+            
+            mname = 'do_' + self.command
+            if not hasattr(self, mname):
+                self.send_error(501, "Unsupported method (%r)" % self.command)
+                return
+            
+            method = getattr(self, mname)
+            method()
+            self.wfile.flush()  # Actually send the response if not already done.
+        except ConnectionResetError:
+            self.close_connection = True
+    
+    def parse_request(self):
+        """Parse a request (internal).
+
+        The request should be stored in self.raw_requestline; the results
+        are in self.command, self.path, self.request_version and
+        self.headers.
+
+        Return True for success, False for failure; on failure, an
+        error is sent back.
+        """
+        self.command = None  # set in case of error on the first line
+        self.request_version = version = self.default_request_version
+        self.close_connection = True
+        requestline = str(self.raw_requestline, 'iso-8859-1')
+        requestline = requestline.rstrip('\r\n')
+        self.requestline = requestline
+        words = requestline.split()
+        if len(words) == 3:
+            [command, path, version] = words
+            if version.startswith('HTTP/'):
+                self.request_version = version
+            elif version.startswith('RTSP/'):
+                self.request_version = version
+            else:
+                self.send_error(400, "Bad request version (%r)" % version)
+                return False
+        elif len(words) == 2:
+            [command, path] = words
+            self.close_connection = False
+            if command != 'GET':
+                self.send_error(400, "Bad HTTP/0.9 request type (%r)" % command)
+                return False
+        else:
+            self.send_error(400, "Bad request syntax (%r)" % requestline)
+            return False
+        
+        self.command, self.path = command, path
+
+        # Parse headers from the file
+        self.headers = parse_headers(self.rfile)
+        
+        if self.headers.get('Expect', '') == '100-continue':
+            if not self.handle_expect_100():
+                return False
+
+        if self.protocol_version >= "HTTP/1.1":
+            self.close_connection = self.headers.get('Connection', '').lower() == 'close'
+        return True
 
 def create_request_handler_class(allowed_ip, hostname, redirect_path):
     class CustomHTTPRequestHandler(HTTPRequestHandler):
