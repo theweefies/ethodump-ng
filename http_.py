@@ -4,6 +4,7 @@
 Module to handle HTTP packets for ethodump-ng.
 """
 import re
+import ssl
 import datetime
 import json
 import threading
@@ -14,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from http.client import HTTPMessage, parse_headers
 from globals import grab_resource, GENERIC_UPNP_UA, check_make_path, HOSTNAME
 from models import apple_models, banner_signatures
-from responses import spotify_get_response, final_spotify_post_response, youtube_get_response
+from responses import spotify_get_response, final_spotify_post_response, youtube_get_response, chromecast_device_desc_xml
 
 def x_www_decode(payload: str):
     if not payload or type(payload) != str:
@@ -260,18 +261,21 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                 #    content = json.dumps(final_spotify_post_response)
         elif 'youtube' in user_agent:
             if http_type == 'GET':
-                content = youtube_get_response
+                #content = youtube_get_response
+                content = chromecast_device_desc_xml
         else:
-            content = ""
+            content = chromecast_device_desc_xml
             
         self.send_response(200)
         if 'Spotify' in user_agent:
             self.send_header("Content-type", "application/json")
         elif 'youtube' in user_agent:
             self.send_header("Content-type", "text/xml")
+        else:
+            self.send_header("Content-type", "text/xml")
         #self.send_header("Content-Security-Policy", "frame-ancestors 'none';")
         self.send_header("Server", "eSDK")
-        self.send_header("Connection", "close")
+        self.send_header("Connection", "keep-alive")
         self.send_header("Content-Length", len(content))
         self.end_headers()
         self.wfile.write(content.encode('utf-8'))

@@ -14,6 +14,7 @@ import select
 import socket
 import struct
 import sys
+import shutil
 import termios
 import threading
 import time
@@ -101,6 +102,7 @@ class StatusInfo:
         self.status_message = ""
         self.message_printed = False
         self.pcap_read = ""
+        self.lower_status = ""
 
 def hide_cursor() -> None:
     """
@@ -128,8 +130,11 @@ def key_press_listener(action) -> None:
         while not flags.exit_flag:
             if select.select([sys.stdin], [], [], 0.1)[0]:
                 key_pressed = sys.stdin.read(1)
-                if key_pressed:
-                    action(key_pressed)
+                if '\x1b' in key_pressed:
+                    extra_keys = sys.stdin.read(2)
+                    if '[' in extra_keys:
+                        key_pressed += extra_keys
+                action(key_pressed)
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
@@ -138,8 +143,16 @@ def handle_key_press(key: str) -> None:
     Function to commit control actions after detecting specific
     key presses.
     """
-    if key == '\x1b':  # ESC key
-        print("ESC key pressed, exiting...                                             ")
+    if key == '\x1b[D': # LEFT-ARROW
+        if flags.playback_speed != 1:
+            flags.playback_speed -= 1
+            print(f'Playback speed: {flags.playback_speed}x ', end='\r')
+    elif key == '\x1b[C': # RIGHT-ARROW
+        if flags.playback_speed != 50:
+            flags.playback_speed += 1
+            print(f'Playback speed: {flags.playback_speed}x ', end='\r')
+    elif key == '\x1b':  # ESC key
+        print("\n[!] ESC key pressed, exiting...                        ")
         flags.exit_flag = True
         flags.q_pressed = True
     elif key.isdigit() or key in key_mapping:
@@ -161,7 +174,7 @@ def handle_key_press(key: str) -> None:
     elif key == ' ':  # Checking for space bar key press
         if flags.paused:
             # If currently paused, unpause and restore any previously expanded device row
-            sys.stdout.write("[-] Output unpaused                                     \r")
+            print("[+] Output unpaused                              ", end='\r')
             flags.paused = False
             flags.q_pressed = False
             if flags.paused_device_selected is not None:
@@ -169,7 +182,7 @@ def handle_key_press(key: str) -> None:
                 flags.paused_device_selected = None
         else:
             # If not currently paused, pause the output and remember any currently expanded device row
-            sys.stdout.write("[+] Output paused                                       \r")
+            print("[-] Output paused                                ", end='\r')
             flags.paused = True
             if flags.key_code is not None:
                 flags.paused_device_selected = flags.key_code  # Remember the currently expanded device
@@ -179,7 +192,8 @@ def handle_key_press(key: str) -> None:
         if flags.q_pressed == True:
             flags.exit_flag = True
         else:
-            sys.stdout.write("[!] Press 'q' again to quit. Press spacebar to continue.\r")
+            status_info.lower_status = ""
+            print("[-] Press 'q' again to quit, spacebar to continue.", end='\r')
             flags.paused = True
             flags.q_pressed = True
 
@@ -191,7 +205,7 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
     # Define maximum widths for each column
     max_widths = {
         '#': 3, 'SOURCE': 19, 'IPv4': 14, 'IPv6': 30, 'MANUFACTURER': 20,
-        'HOSTNAME': 20, 'SERVICES': 20, 'TTL': 4, 'OS': 15, 'CONNECTIONS': 15, 'PORTS': 6, 'COUNTS': 6
+        'HOSTNAME': 20, 'SERVICES': 20, 'TTL': 4, 'MAKE/MODEL/OS': 15, 'PORTS': 6, 'COUNTS': 6
     }
 
     # Define the header and row formats using the maximum widths
@@ -201,9 +215,12 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
 
     while not flags.exit_flag:
 
-        clients_dict = clients_.copy()
-
         if not flags.paused:
+
+            # Get the terminal size
+            rows, columns = shutil.get_terminal_size()
+
+            clients_dict = clients_.copy()
             #with flags.lock:
 
             display_body = ""
@@ -230,52 +247,95 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
             display_body += " " + header + "\n"
             # Iterate through the clients dictionary and print each row
             for client_mac, client_data in clients_dict.items():
-                client_dict = client_data.to_dict()  # Convert the client object to a dictionary
+                if isinstance(client_data, dict):
+                    for client_ip, ext_client in client_data.items():
+                        client_dict = ext_client.to_dict()  # Convert the client object to a dictionary
                 
-                # Prepare each value, truncate if necessary, convert None to '', and ensure alignment
-                truncated_dict = {}
-                for k, v in client_dict.items():
-                    # If the field is one of 'OS', 'SERVICES', or 'PORTS' and is a set or list, take the first value
-                    if k in ['SERVICES', 'PORTS', 'OS', 'HOSTNAME', 'CONNECTIONS']:
-                        if v:
-                            first_val = next(iter(v))  # Get the first value from the set/list
-                            truncated_dict[k] = str(first_val)[:max_widths[k]]
-                        else:
-                            truncated_dict[k] = ''  # Set to empty string if the set is empty
-                    else:
-                        truncated_dict[k] = (str(v)[:max_widths[k]] if v is not None else '')
+                        # Prepare each value, truncate if necessary, convert None to '', and ensure alignment
+                        truncated_dict = {}
+                        for k, v in client_dict.items():
+                            # If the field is one of 'OS', 'SERVICES', or 'PORTS' and is a set or list, take the first value
+                            if k in ['SERVICES', 'PORTS', 'MAKE/MODEL/OS', 'HOSTNAME']:
+                                if v:
+                                    first_val = next(iter(v))  # Get the first value from the set/list
+                                    truncated_dict[k] = str(first_val)[:max_widths[k]]
+                                else:
+                                    truncated_dict[k] = ''  # Set to empty string if the set is empty
+                            else:
+                                truncated_dict[k] = (str(v)[:max_widths[k]] if v is not None else '')
 
-                # Format and print the row
-                if flags.key_code and client_dict["#"] == flags.key_code:
-                    display_body += DARK_RED
-                elif client_data.color:
-                    display_body += client_data.color
-                formatted_row = header_format.format(*truncated_dict.values())
-                display_body += " " + formatted_row + "\n"
-                if flags.key_code and client_dict["#"] == flags.key_code:
-                    if not status_info.message_printed:
-                        status_info.status_message += f"][ + Device {flags.key_code} expanded"
-                        status_info.message_printed = True
-                    max_additional_rows = max(len(client_dict.get('SERVICES', [])), len(client_dict.get('HOSTNAME', [])), len(client_dict.get('PORTS', [])), len(client_dict.get('OS', [])), len(client_dict.get('CONNECTIONS', []))) - 1
-                    for i in range(max_additional_rows):
-                        additional_row = {k: '' for k in max_widths}  # Initialize with empty strings
-                        for k in ['HOSTNAME', 'SERVICES', 'PORTS', 'OS', 'CONNECTIONS']:
-                            values = list(client_dict.get(k, []))
-                            if i + 1 < len(values):  # Check if there is a value to print in this additional row
-                                additional_row[k] = str(values[i + 1])[:max_widths[k]]
-                        # Format and print the additional row
-                        formatted_additional_row = header_format.format(*additional_row.values())
-                        display_body += " " + formatted_additional_row + "\n"
-                if flags.key_code and client_dict["#"] == flags.key_code:
-                    display_body += DEFAULT
-                elif client_data.color:
-                    display_body += DEFAULT
-            display_body += "\n"
+                        # Format and print the row
+                        if flags.key_code and client_dict["#"] == flags.key_code:
+                            display_body += DARK_RED
+                        elif ext_client.color:
+                            display_body += ext_client.color
+                        formatted_row = header_format.format(*truncated_dict.values())
+                        display_body += " " + formatted_row + "\n"
+                        if flags.key_code and client_dict["#"] == flags.key_code:
+                            if not status_info.message_printed:
+                                status_info.status_message += f"][ + Device {flags.key_code} expanded"
+                                status_info.message_printed = True
+                            max_additional_rows = max(len(client_dict.get('SERVICES', [])), len(client_dict.get('HOSTNAME', [])), len(client_dict.get('PORTS', [])), len(client_dict.get('MAKE/MODEL/OS', []))) - 1
+                            for i in range(max_additional_rows):
+                                additional_row = {k: '' for k in max_widths}  # Initialize with empty strings
+                                for k in ['HOSTNAME', 'SERVICES', 'PORTS', 'MAKE/MODEL/OS']:
+                                    values = list(client_dict.get(k, []))
+                                    if i + 1 < len(values):  # Check if there is a value to print in this additional row
+                                        additional_row[k] = str(values[i + 1])[:max_widths[k]]
+                                # Format and print the additional row
+                                formatted_additional_row = header_format.format(*additional_row.values())
+                                display_body += " " + formatted_additional_row + "\n"
+                        if flags.key_code and client_dict["#"] == flags.key_code:
+                            display_body += DEFAULT
+                        elif ext_client.color:
+                            display_body += DEFAULT
+                else:
+                    client_dict = client_data.to_dict()  # Convert the client object to a dictionary
+                    
+                    # Prepare each value, truncate if necessary, convert None to '', and ensure alignment
+                    truncated_dict = {}
+                    for k, v in client_dict.items():
+                        # If the field is one of 'OS', 'SERVICES', or 'PORTS' and is a set or list, take the first value
+                        if k in ['SERVICES', 'PORTS', 'MAKE/MODEL/OS', 'HOSTNAME']:
+                            if v:
+                                first_val = next(iter(v))  # Get the first value from the set/list
+                                truncated_dict[k] = str(first_val)[:max_widths[k]]
+                            else:
+                                truncated_dict[k] = ''  # Set to empty string if the set is empty
+                        else:
+                            truncated_dict[k] = (str(v)[:max_widths[k]] if v is not None else '')
+
+                    # Format and print the row
+                    if flags.key_code and client_dict["#"] == flags.key_code:
+                        display_body += DARK_RED
+                    elif client_data.color:
+                        display_body += client_data.color
+                    formatted_row = header_format.format(*truncated_dict.values())
+                    display_body += " " + formatted_row + "\n"
+                    if flags.key_code and client_dict["#"] == flags.key_code:
+                        if not status_info.message_printed:
+                            status_info.status_message += f"][ + Device {flags.key_code} expanded"
+                            status_info.message_printed = True
+                        max_additional_rows = max(len(client_dict.get('SERVICES', [])), len(client_dict.get('HOSTNAME', [])), len(client_dict.get('PORTS', [])), len(client_dict.get('MAKE/MODEL/OS', []))) - 1
+                        for i in range(max_additional_rows):
+                            additional_row = {k: '' for k in max_widths}  # Initialize with empty strings
+                            for k in ['HOSTNAME', 'SERVICES', 'PORTS', 'MAKE/MODEL/OS']:
+                                values = list(client_dict.get(k, []))
+                                if i + 1 < len(values):  # Check if there is a value to print in this additional row
+                                    additional_row[k] = str(values[i + 1])[:max_widths[k]]
+                            # Format and print the additional row
+                            formatted_additional_row = header_format.format(*additional_row.values())
+                            display_body += " " + formatted_additional_row + "\n"
+                    if flags.key_code and client_dict["#"] == flags.key_code:
+                        display_body += DEFAULT
+                    elif client_data.color:
+                        display_body += DEFAULT
+            display_body += "\n\n"
             sys.stdout.write(display_body)
             sys.stdout.flush()
             time.sleep(.6)  # Update every half second
         else:
-            pass
+            time.sleep(.6)
 
 def load_oui() -> None:
     """
@@ -308,16 +368,19 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                 cur_client.communicants[eth_header.dst_mac] = None
         else:
             cur_client = clients.get(eth_header.src_mac)
-            if not is_multicast_or_broadcast(eth_header.dst_mac):
-                cur_client.communicants[eth_header.dst_mac] = None
+            # Extender detection - ensure we don't start attempting to modify attributes yet
+            if not isinstance(cur_client, dict):
+                if not is_multicast_or_broadcast(eth_header.dst_mac):
+                    cur_client.communicants[eth_header.dst_mac] = None
 
         # increase packet count for this client
-        cur_client.count += 1
+        if not isinstance(cur_client, dict):
+            cur_client.count += 1
 
         if eth_header.eth_type == ARP_P:
             arp_packet = parse_arp(reader)
             process_arp(arp_packet, clients, flags)
-            cur_client.protocols.add('ARP')
+            # cur_client.protocols.add('ARP') [[we moved this into the arp module]]
             return
 
         elif eth_header.eth_type == ETH_P:
@@ -327,7 +390,30 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                 return
             
             if ip_header.src_ip and is_private_ipv4(ip_header.src_ip):
+                # Extender scenario - we've already re-arranged our clients dict to store a dictionary of ip:Client pairs
+                if isinstance(cur_client, dict):
+                    ext_client = cur_client.get(ip_header.src_ip)
+                    if not ext_client:
+                        clients[eth_header.src_mac][ip_header.src_ip] = Client(eth_header.src_mac, flags.client_count)
+                        cur_client = clients[eth_header.src_mac][ip_header.src_ip]
+                        flags.client_count += 1
+                    else:
+                        cur_client = ext_client
+                    cur_client.count += 1
+                else:
+                    # Here we detect the first instance of a mac having multiple ip addresses associated with it
+                    if cur_client.ip_address and cur_client.ip_address != ip_header.src_ip:
+                        flags.extender_present = True
+                        clients[eth_header.src_mac] = {}
+                        clients[eth_header.src_mac][cur_client.ip_address] = cur_client
+                        clients[eth_header.src_mac][ip_header.src_ip] = Client(eth_header.src_mac, flags.client_count)
+                        flags.client_count += 1
+                        cur_client = clients[eth_header.src_mac][ip_header.src_ip]
+                        cur_client.count += 1
                 cur_client.ip_address = ip_header.src_ip
+
+            else:
+                return
 
             if is_private_ipv4(ip_header.dst_ip) and not is_multicast_or_broadcast(eth_header.dst_mac):
                 cur_client.communicants[eth_header.dst_mac] = ip_header.dst_ip
@@ -353,7 +439,7 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     if not dhcp_packet:
                         write_packet(p, "ethodebug.pcap")
                     match_dhcp_fingerprint(dhcp_packet, cur_client)
-                    extract_dhcp_client_details(dhcp_packet, cur_client)
+                    extract_dhcp_client_details(dhcp_packet, cur_client, clients)
                     cur_client.protocols.add('DHCP')
                     return
 
@@ -462,7 +548,7 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                 cur_client.protocols.add('ICMP')
                 return
             
-        elif eth_header.eth_type == ETH_IPV6:
+        elif eth_header.eth_type == ETH_IPV6 and not flags.extender_present:
             
             ipv6_header = parse_ipv6_header(reader)
             if not cur_client.ipv6_address and ipv6_header.src_ipv6 != IPV6_ANY_ADDRESS:
@@ -477,7 +563,7 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     if not dhcpv6_packet:
                         write_packet(p, "ethodebug.pcap")
                     else:
-                        extract_fqdn_from_options(dhcpv6_packet.options, cur_client)
+                        extract_dhcpv6_client_details(dhcpv6_packet.options, cur_client)
                     cur_client.protocols.add('DHCPv6')
                     return
 
@@ -572,7 +658,10 @@ def packet_reader(filename: str):
             status_info.pcap_read = f"][ Packets read: {count}"
 
             if ts_prev is not None:
-                time.sleep(ts_cur - ts_prev)  # Sleep for the duration between the current and previous packet
+                try:
+                    time.sleep((ts_cur - ts_prev) / flags.playback_speed)  # Sleep for the duration between the current and previous packet
+                except ValueError:
+                    time.sleep(abs(ts_cur - ts_prev) / flags.playback_speed) # This is an exception for instances where packet timestamps are goofed
 
             ts_prev = ts_cur
     
@@ -768,7 +857,7 @@ if __name__ == "__main__":
     # Set queues to None
     write_queue = None
     packet_queue = None
-    # Number of consumer threads
+    # Number of packet processing threads
     num_workers = 4
     # Initialize threads to Null
     write_thread = None
@@ -779,7 +868,6 @@ if __name__ == "__main__":
     mdns_redirect_thread = None
     ssdp_thread = None
     http_server_thread = None
-    # redirect object
     redirect_object = None
 
     if not args.interface and not args.read_pcap:
@@ -808,10 +896,8 @@ if __name__ == "__main__":
     packet_queue = queue.Queue(QUEUE_SIZE)
     # Set the threading lock
     flags.lock = threading.Lock()
-    
-    hide_cursor()
 
-    generate_sha1_hash(iface.mac)
+    hide_cursor()
 
     # temporary development mode measure
     if True:
@@ -822,7 +908,7 @@ if __name__ == "__main__":
         if not os.path.exists(args.read_pcap):
             print(f'ERROR: File does not exist: {args.read_pcap}.')
             sys.exit()
-        status_info.interface = args.read_pcap
+        status_info.interface = os.path.basename(args.read_pcap)
 
     if args.write:
         write_header(args.write)
@@ -857,7 +943,7 @@ if __name__ == "__main__":
 
     try:
         while not flags.exit_flag:
-            time.sleep(1)
+            time.sleep(10)
             pass
 
     except KeyboardInterrupt:
@@ -875,11 +961,19 @@ if __name__ == "__main__":
 
     if args.debug:
         for client in clients:
+            if isinstance(clients[client], dict):
+                for ip, ext_client in clients[client].items():
+                    print(ext_client)
+                continue
             print(clients[client])
 
     if args.save:
         f_save = open(args.save, 'w')
         for client in clients:
+            if isinstance(clients[client], dict):
+                for ip, ext_client in clients[client].items():
+                    f_save.write(str(ext_client) + '\n')
+                continue
             f_save.write(str(clients[client]) + '\n')
         f_save.close()
     

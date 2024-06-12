@@ -53,11 +53,21 @@ def process_arp(arp_packet: ARP, clients: dict, flags: Flags) -> None:
 
     # If not, create a new Client instance and add it to the clients dictionary
     if not sender:
-        sender = Client(arp_packet.sender_mac, arp_packet.sender_ip)
+        sender = Client(arp_packet.sender_mac, flags.client_count)
         clients[arp_packet.sender_mac] = sender
+        flags.client_count += 1
     else:
-        # If the sender is already known, update its IP address
-        sender.ip_address = arp_packet.sender_ip
+        if isinstance(sender, dict):
+            ext_client = sender.get(arp_packet.sender_ip)
+            if not ext_client:
+                clients[arp_packet.sender_mac][arp_packet.sender_ip] = Client(arp_packet.sender_mac, flags.client_count)
+                sender = clients[arp_packet.sender_mac][arp_packet.sender_ip]
+                flags.client_count += 1
+            else:
+                sender = ext_client
+
+    # If the sender is already known, update its IP address
+    sender.ip_address = arp_packet.sender_ip
 
     # For ARP requests, check if the target is known and update or add it similarly
     if arp_packet.opcode == ARP_REQUEST and arp_packet.target_mac not in [ETH_BCAST_ADDRESS, ETH_ANY_ADDRESS]:
@@ -66,3 +76,5 @@ def process_arp(arp_packet: ARP, clients: dict, flags: Flags) -> None:
             target = Client(arp_packet.target_mac, flags.client_count)  # Target IP might not be known from ARP request
             clients[arp_packet.target_mac] = target
             flags.client_count += 1
+
+    sender.protocols.add('ARP')

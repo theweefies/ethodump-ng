@@ -12,7 +12,7 @@ import re
 
 from globals import clean_name, Client, ResponseObject, RedirectObject
 from models import samsung_models, apple_models, hp_models, roku_models
-from responses import send_airplay_response_new, send_spotify_response, send_query
+from responses import send_airplay_response, send_spotify_response, send_query
 
 MDNS_PTR = 12
 MDNS_TXT = 16
@@ -485,7 +485,6 @@ def prepare_redirect(socket: socket.socket, ip_version: int, dst_mac, dst_ip, pa
     src_ipv6 = own_iface.ipv6
     
     if packet.header.num_questions > 0 and ip_version != 6 and packet.header.flags == 0:
-        service_name_list = []
         actual_num_questions = len(packet.questions) 
         for i in range(min(packet.header.num_questions, actual_num_questions)):
             if packet.questions[i].type_ == MDNS_PTR and not packet.questions[i].domain_name:
@@ -497,9 +496,9 @@ def prepare_redirect(socket: socket.socket, ip_version: int, dst_mac, dst_ip, pa
                 if 'spotify' in service_name:
                     resp_pkt = send_spotify_response(resp)
                 elif 'google' in service_name:
-                    pass
+                    resp_pkt = send_airplay_response(resp, "google")
                 elif 'airplay.' in service_name or 'hap' in service_name or 'raop' in service_name:
-                    resp_pkt = send_airplay_response_new(resp)
+                    resp_pkt = send_airplay_response(resp,"airplay")
                     #query_pkt = send_query(resp)
 
                 if resp_pkt:

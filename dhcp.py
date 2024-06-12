@@ -9,13 +9,28 @@ from io import BytesIO
 from typing import List, Tuple
 from dataclasses import dataclass, field
 
-from globals import bytes_to_mac, clean_name, is_utf8_decodable, Client
+from globals import bytes_to_mac, clean_name, is_utf8_decodable, Client, DARK_RED
 from models import dhcp_fingerprints
 
-DHCP_HNAME_OPT      = 12
-DHCP_VCLASS_OPT     = 60
-DHCP_CLIENTID_OPT   = 61
-DHCP_DOMAINNAME_OPT = 15
+DHCP_HNAME_OPT      =  12
+DHCP_VCLASS_OPT     =  60
+DHCP_CLIENTID_OPT   =  61
+DHCP_ROUTER_OPT     =   3
+DHCP_DOM_NAME_OPT   =  15
+DHCP_FQDN_OPT       = 119
+DHCP_DNS_OPT        =   6
+DHCP_SERVER_ID_OPT  =  54
+DHCP_MESSAGE_TYPE   =  53
+
+DHCP_DISCOVER = 1
+DHCP_OFFER    = 2
+DHCP_REQUEST =  3
+DHCP_ACK =      5
+
+DHCPV6_SOLICIT = 6 
+
+DHCPV6_CLIENTID_OPT =  1
+DHCPV6_FQDN_OPT     = 39
 
 @dataclass
 class DHCPPacket:
@@ -62,13 +77,17 @@ def match_dhcp_fingerprint(packet: DHCPPacket, cur_client: Client) -> None:
             if parameter_request_list == fingerprint_value[1]:
                 cur_client.oses.add(fingerprint_value[0])
 
-def extract_fqdn_from_options(options: List[Tuple[int, bytes]], cur_client: Client) -> None:
+def extract_dhcpv6_client_details(dhcpv6_packet: DHCPv6Packet, cur_client: Client) -> None:
     """
     Extract the Fully Qualified Domain Name (FQDN) from DHCPv6 options.
     """
+    options = dhcpv6_packet.options
+    msg_type = dhcpv6_packet.message_type
+
     for option_code, option_data in options:
-        if option_code == 39:
-            # Option 39 found, process its data
+        if option_code == DHCPV6_CLIENTID_OPT and msg_type == DHCPV6_SOLICIT:
+            pass # could be useful for getting client mac in extender network situation
+        elif option_code == DHCPV6_FQDN_OPT: # FQDN
             if len(option_data) < 1:
                 return
             
@@ -117,7 +136,7 @@ def parse_dhcpv6_packet(data: bytes) -> DHCPv6Packet:
     
     return DHCPv6Packet(message_type, transaction_id, options)
 
-def extract_dhcp_client_details(dhcp_packet: DHCPPacket, cur_client: Client) -> None:
+def extract_dhcp_client_details(dhcp_packet: DHCPPacket, cur_client: Client, clients: dict) -> None:
     """
     Function to attempt to extract hostname and vendor info
     from dhcp options
@@ -127,15 +146,72 @@ def extract_dhcp_client_details(dhcp_packet: DHCPPacket, cur_client: Client) -> 
     if hostname_decoded and len(hostname_decoded) > 3:
         hostname_cleaned = clean_name(hostname_decoded)
         cur_client.hostnames.add(hostname_cleaned)
+
     vendor_class = get_dhcp_option(dhcp_packet, DHCP_VCLASS_OPT)
     if is_utf8_decodable(vendor_class) and not cur_client.vendor_class:
         cur_client.vendor_class = is_utf8_decodable(vendor_class)
         cur_client.oses.add(cur_client.vendor_class)
+
     client_id = get_dhcp_option(dhcp_packet, DHCP_CLIENTID_OPT)
     client_id_decoded = is_utf8_decodable(client_id)
     if client_id_decoded and len(client_id_decoded) > 3:
         client_id_cleaned = clean_name(client_id_decoded)
         cur_client.hostnames.add(client_id_cleaned)
+
+    dhcp_server_id = get_dhcp_option(dhcp_packet, DHCP_SERVER_ID_OPT)
+    if dhcp_server_id:
+        dhcp_server_ip = socket.inet_ntoa(dhcp_server_id)
+        if dhcp_server_ip == cur_client.ip_address:
+            cur_client.notes.add('dhcp_server')
+
+    router = get_dhcp_option(dhcp_packet, DHCP_ROUTER_OPT)
+    if router:
+        router_ip = socket.inet_ntoa(router)
+        if router_ip == cur_client.ip_address:
+            cur_client.color = DARK_RED
+            cur_client.notes.add('network_router')
+
+    domain_name_server = get_dhcp_option(dhcp_packet, DHCP_DNS_OPT)
+    if domain_name_server:
+        domain_name_server_ip = socket.inet_ntoa(domain_name_server)
+        if domain_name_server_ip == cur_client.ip_address:
+            cur_client.notes.add('provides_network_dns')
+
+    domain_name = get_dhcp_option(dhcp_packet, DHCP_DOM_NAME_OPT)
+    if domain_name and is_utf8_decodable(domain_name):
+        domain_name_decoded = is_utf8_decodable(domain_name)
+        domain_name_cleaned = clean_name(domain_name_decoded)
+        cur_client.hostnames.add(domain_name_cleaned)
+
+    fqdn = get_dhcp_option(dhcp_packet, DHCP_FQDN_OPT)
+    if fqdn and is_utf8_decodable(fqdn):
+        fqdn_decoded = is_utf8_decodable(fqdn)
+        fqdn_cleaned = clean_name(fqdn_decoded)
+        cur_client.hostnames.add(fqdn_cleaned)
+
+    opt_53_msg_type = get_dhcp_option(dhcp_packet, DHCP_MESSAGE_TYPE)
+
+    if opt_53_msg_type and type(opt_53_msg_type) == bytes and len(opt_53_msg_type) == 1:
+        opt_53_msg_type = struct.unpack('!B', opt_53_msg_type)[0]
+        if opt_53_msg_type in [DHCP_DISCOVER,DHCP_REQUEST]:
+            cur_client.src_mac = dhcp_packet.client_mac
+
+        if opt_53_msg_type == DHCP_ACK:
+            mac = None
+            cl_object = None
+            for src_mac, client_object in clients.items():
+                if isinstance(client_object, dict):
+                    for src_ip, ext_client_object in client_object.items():
+                        if src_ip == '0.0.0.0' and ext_client_object.src_mac == dhcp_packet.client_mac:
+                            mac = src_mac
+                            cl_object = ext_client_object
+                            break
+                if mac and cl_object:
+                    break
+            if mac and cl_object:
+                clients[mac][dhcp_packet.your_ip] = cl_object
+                clients[mac][dhcp_packet.your_ip].ip_address = dhcp_packet.your_ip
+                clients[mac].pop('0.0.0.0')
     
 def get_dhcp_option(dhcp_packet: DHCPPacket, option_code: int) -> bytes | None:
     """

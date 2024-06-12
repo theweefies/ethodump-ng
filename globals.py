@@ -59,10 +59,17 @@ DEFAULT = '\x1b[0m'
 CURSOR_TO_TOP = '\x1b[H'
 CLEAR_SCREEN_CURSOR_TO_TOP = '\x1b[2J\x1b[H'
 
-# Mapping keys [w,e,r,t,y,u,i,o,p] to numbers [10-18]
-key_mapping = {'w': 10, 'e': 11, 'r': 12, 't': 13, 'y': 14, 'u': 15, 'i': 16, 'o': 17, 'p': 18}
+# Mapping keys to clients for display expansion
+key_mapping = {'w': 10, 'e': 11, 'r': 12, 't': 13, 'y': 14, 'u': 15, 'i': 16, 'o': 17, 'p': 18, 'a': 19, 's':20}
 
-def generate_sha1_hash(src_mac):
+def generate_random_mac():
+    # Generate a random MAC address
+    mac = [random.randint(0x00, 0xFF) for _ in range(6)]
+    # Format it as a colon-separated string
+    mac_address = ':'.join(f'{octet:02x}' for octet in mac)
+    return mac_address
+
+def generate_sha1_hash(src_mac: str):
     sha1_hash = hashlib.sha1(src_mac.encode())
     sha1_hex = sha1_hash.hexdigest()
     
@@ -104,6 +111,8 @@ def generate_random_version_string():
     version_string = f"{major}.{minor}.{patch}-g{hash_part}"
     return version_string
 
+RANDOM_MAC = generate_random_mac()
+SHA1_HASH = generate_sha1_hash(RANDOM_MAC)
 PK = generate_hex_string(64)
 SHORT_PK = generate_random_public_key()
 CID = generate_hex_string(32)
@@ -111,12 +120,14 @@ UUID_K = str(uuid.uuid4())
 VERSION_TRIPLET = generate_random_version_code()
 MODEL_NAME = generate_random_model_name()
 LONG_VERSION = generate_random_version_string()
-
 PRIVATE_KEY_RSA = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048
     )
-PUBLIC_KEY_RSA = PRIVATE_KEY_RSA.public_key().public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
+PUBLIC_KEY_RSA = PRIVATE_KEY_RSA.public_key().public_bytes(
+        encoding=serialization.Encoding.DER, 
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
 PUBLIC_KEY_RSA_B64 = base64.b64encode(PUBLIC_KEY_RSA).decode('utf-8')
 
 def is_self_L2(packet_mac: str, iface_mac: str) -> bool:
@@ -331,6 +342,8 @@ class Flags:
         self.device_switch = False
         self.q_pressed = False
         self.debug_pwrite = False
+        self.extender_present = False
+        self.playback_speed = 1
 
 class Client:
     """
@@ -362,6 +375,7 @@ class Client:
             self.cred_pairs = set()
             self.count = 0
             self.color = None
+            self.notes = set()
             get_manufacturer(self)
 
     def __str__(self):
@@ -380,7 +394,7 @@ class Client:
             f"Vendor Class: {self.vendor_class}",
             f"Services: {', '.join(self.services)}",
             f"User Agents: {', '.join(self.user_agents)}",
-            f"Operating Systems: {', '.join(self.oses)}",
+            f"Make/Model/OS: {', '.join(self.oses)}",
             f"TTL: {self.ttl}",
             f"Ports: {', '.join(map(str, self.ports))}",
             f"Communicants: {', '.join(f'{k}: {v}' for k, v in self.communicants.items())}",
@@ -392,7 +406,8 @@ class Client:
             f"TLS JA3 Classifications: {'; '.join(self.tls_ja3_classifications)}",
             f"TLS SNIs: {', '.join(self.tls_snis)}",
             f"Credential Pairs: {', '.join(self.cred_pairs)}",
-            f"Count: {self.count}"
+            f"Packet Count: {self.count}",
+            f"Notes: {', '.join(self.notes)}"
         ]
         # Join all the attribute strings with newlines for pretty printing
         return "\n".join(attributes)
@@ -410,8 +425,8 @@ class Client:
             'HOSTNAME': self.hostnames,
             'SERVICES': self.services,
             'TTL': self.ttl,
-            'OS': self.oses,
-            'CONNECTIONS': self.connections,
+            'MAKE/MODEL/OS': self.oses,
+            #'CONNECTIONS': self.connections,
             'PORTS': self.ports,
             'COUNTS': self.count
         }
