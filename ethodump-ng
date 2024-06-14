@@ -28,7 +28,7 @@ from arp import parse_arp, process_arp
 from dhcp import *
 from dns_ import parse_dns_packet, process_dns_packet
 from globals import *
-from http_ import detect_service_banner, parse_http, start_server
+from http_ import detect_service_banner, parse_http, start_server, start_https_server
 from icmp import parse_icmp, parse_icmpv6, process_icmpv6_packet
 from igmp import parse_igmp
 from mdns import parse_mdns_packet, prepare_redirect, process_mdns_packet
@@ -403,13 +403,15 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                 else:
                     # Here we detect the first instance of a mac having multiple ip addresses associated with it
                     if cur_client.ip_address and cur_client.ip_address != ip_header.src_ip:
-                        flags.extender_present = True
-                        clients[eth_header.src_mac] = {}
-                        clients[eth_header.src_mac][cur_client.ip_address] = cur_client
-                        clients[eth_header.src_mac][ip_header.src_ip] = Client(eth_header.src_mac, flags.client_count)
-                        flags.client_count += 1
-                        cur_client = clients[eth_header.src_mac][ip_header.src_ip]
-                        cur_client.count += 1
+                        # dhcp discovery or request
+                        if ip_header.src_ip != '0.0.0.0':
+                            flags.extender_present = True
+                            clients[eth_header.src_mac] = {}
+                            clients[eth_header.src_mac][cur_client.ip_address] = cur_client
+                            clients[eth_header.src_mac][ip_header.src_ip] = Client(eth_header.src_mac, flags.client_count)
+                            flags.client_count += 1
+                            cur_client = clients[eth_header.src_mac][ip_header.src_ip]
+                            cur_client.count += 1
                 cur_client.ip_address = ip_header.src_ip
 
             else:
@@ -937,12 +939,21 @@ if __name__ == "__main__":
     if args.redirect and not args.read_pcap:
         mdns_redirect_thread = threading.Thread(target=mdns_redirect, args=(iface, redirect_object,), daemon=True).start()
         ssdp_thread = threading.Thread(target=ssdp_responder, args=(iface, redirect_object,), daemon=True).start()
-        http_server_thread = threading.Thread(target=start_server, args=(redirect_object,), daemon=True).start()
 
+        # If redirection is to this application, enable the http and https servers
+        if redirect_object.redirect_ip == iface.ip:
+            http_server_thread = threading.Thread(target=start_server, args=(redirect_object,), daemon=True).start()
+            
+            # only start the https server if port, key, and cert file are defined from the config
+            if redirect_object.redirect_port_https and redirect_object.key_file and redirect_object.cert_file:
+                https_server_thread = threading.Thread(target=start_https_server, args=(redirect_object,), daemon=True).start()
+
+    # Thread to parse http/tcp payloads for json, xml, and other juicy tidbits
     http_thread = threading.Thread(target=handle_http, daemon=True).start()
 
     try:
         while not flags.exit_flag:
+            # could use this as a timer of sorts
             time.sleep(10)
             pass
 

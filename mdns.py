@@ -12,7 +12,7 @@ import re
 
 from globals import clean_name, Client, ResponseObject, RedirectObject
 from models import samsung_models, apple_models, hp_models, roku_models
-from responses import send_airplay_response, send_spotify_response, send_query
+from responses import send_response, send_spotify_response, send_query
 
 MDNS_PTR = 12
 MDNS_TXT = 16
@@ -480,6 +480,7 @@ def parse_authority(reader: BytesIO) -> MDNSAuthoratativeNameservers | None:
 def prepare_redirect(socket: socket.socket, ip_version: int, dst_mac, dst_ip, packet: MDNSPacket, own_iface, red_object):
     hostname = red_object.hostname
     srv_port = red_object.redirect_port
+    srv_port_https = red_object.redirect_port_https
     src_mac = own_iface.mac
     src_ip = own_iface.ip
     src_ipv6 = own_iface.ipv6
@@ -490,19 +491,22 @@ def prepare_redirect(socket: socket.socket, ip_version: int, dst_mac, dst_ip, pa
             if packet.questions[i].type_ == MDNS_PTR and not packet.questions[i].domain_name:
                 service_name = packet.questions[i].name.decode('utf-8','ignore')
                 unicast = packet.questions[i].qu_bit
-                resp = ResponseObject(ip_version, unicast, hostname, src_mac, src_ip, src_ipv6, dst_mac, dst_ip, service_name, srv_port)
-                resp_pkt = None
+                resp = ResponseObject(ip_version, unicast, hostname, src_mac, src_ip, src_ipv6, dst_mac, dst_ip, service_name, srv_port, srv_port_https)
+                resp_pkts = []
                 # query_pkt = None
                 if 'spotify' in service_name:
-                    resp_pkt = send_spotify_response(resp)
+                    resp_pkts.append(send_spotify_response(resp))
                 elif 'google' in service_name:
-                    resp_pkt = send_airplay_response(resp, "google")
+                    resp_pkts.append(send_response(resp, "google"))
+                    resp_pkts.append(send_response(resp, "spotify"))
                 elif 'airplay.' in service_name or 'hap' in service_name or 'raop' in service_name:
-                    resp_pkt = send_airplay_response(resp,"airplay")
+                    resp_pkts.append(send_response(resp,"airplay"))
+                    
                     #query_pkt = send_query(resp)
 
-                if resp_pkt:
-                    socket.send(resp_pkt)
+                if resp_pkts:
+                    for pkt in resp_pkts:
+                        socket.send(pkt)
                 # if query_pkt:
                 #    socket.send(query_pkt)
 

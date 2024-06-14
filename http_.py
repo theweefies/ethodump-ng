@@ -7,15 +7,19 @@ import re
 import ssl
 import datetime
 import json
-import threading
+import logging
+import socket
 import base64
 import binascii
 from urllib.parse import urlparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from http.client import HTTPMessage, parse_headers
-from globals import grab_resource, GENERIC_UPNP_UA, check_make_path, HOSTNAME
+
+from globals import grab_resource, GENERIC_UPNP_UA, check_make_path, HOSTNAME, UUID_K, LONG_VERSION, PK, MODEL_NAME
 from models import apple_models, banner_signatures
 from responses import spotify_get_response, final_spotify_post_response, youtube_get_response, chromecast_device_desc_xml
+
+logging.basicConfig(level=logging.DEBUG)
 
 def x_www_decode(payload: str):
     if not payload or type(payload) != str:
@@ -33,6 +37,17 @@ def x_www_decode(payload: str):
         decoded_dict[key] = val
 
     return decoded_dict
+
+def detect_tls_client_hello(connection):
+    try:
+        initial_data = connection.recv(5, socket.MSG_PEEK)
+        if len(initial_data) < 5:
+            return False
+        if initial_data[0] == 0x16 and initial_data[1] == 0x03:
+            return True
+    except Exception as e:
+        print(f"Error detecting TLS Client Hello: {e}")
+    return False
 
 def detect_service_banner(payload: bytes | str, cur_client) -> None:
     """
@@ -188,12 +203,18 @@ def parse_http(payload: bytes | str, cur_client, resource_grab: bool=False) -> N
             xml_fh.write(xml_object.encode())
     
 class HTTPRequestHandler(BaseHTTPRequestHandler):
-    server_version = "Sony-Linux/4.1, UPnP/1.0, Sony_UPnP_SDK/1.0"
+    server_version = "SHP, UPnP/1.0, Sony UPnP SDK/1.0"
+    user_agent = "DLNADOC/1.50 SEC_HHP_"
 
-    def __init__(self, *args, allowed_ip=None, hostname=HOSTNAME, redirect_path=None, **kwargs):
-        self.allowed_ip = allowed_ip
-        self.hostname = hostname
-        self.redirect_path = redirect_path
+    def __init__(self, *args, red_obj, **kwargs):
+        self.allowed_ip = red_obj.target_ip
+        self.hostname = red_obj.hostname
+        self.redirect_path = red_obj.redirect_path
+        self.server_ip = red_obj.redirect_ip
+        self.port = red_obj.redirect_port
+        self.https_port = red_obj.redirect_port_https
+        self.user_agent = f"DLNADOC/1.50 SEC_HHP_{self.hostname}"
+        
         super().__init__(*args, **kwargs)
 
     def version_string(self):
@@ -201,36 +222,34 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         return self.server_version
 
     def do_GET(self):
+        headers = {}
         if self.allowed_ip and self.client_address[0] != self.allowed_ip:
             self.send_response(403)  # Forbidden
             self.end_headers()
             self.wfile.write(b"Access denied")
-            return
-        user_agent = None    
+            return    
         # Log request details
         print(f"\nReceived GET request from {self.client_address}")
         print(f"Path: {self.path}")
         print(f"Headers:\n{self.headers}")
         for type_,val in self.headers.items():
-            if 'User-Agent' in type_:
-                user_agent = val
+            headers[type_] = val
         if self.redirect_path in self.path:
-            self.serve_resource("GET", user_agent)
+            self.serve_resource("GET", headers)
 
     def do_POST(self):
+        headers = {}
         if self.allowed_ip and self.client_address[0] != self.allowed_ip:
             self.send_response(403)  # Forbidden
             self.end_headers()
             self.wfile.write(b"Access denied")
             return
-        user_agent = None
         # Log request details
         print(f"\nReceived POST request from {self.client_address}")
         print(f"Path: {self.path}")
         print(f"Headers:\n{self.headers}")
         for type_,val in self.headers.items():
-            if 'User-Agent' in type_:
-                user_agent = val
+            headers[type_] = val
         # Get the length of the data
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
@@ -244,12 +263,17 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         else:
             flag = 'clientKey-valid'
 
-        self.serve_resource("POST", user_agent, flag)
+        self.serve_resource("POST", headers, flag)
 
-    def serve_resource(self, http_type, user_agent, flag=None):
+    def serve_resource(self, http_type, headers: dict, flag=None):
+        user_agent = headers.get('User-Agent')
+        content_type = headers.get('Content-Type')
+        accept_language = headers.get('Accept-Language')
+        origin = headers.get('Origin')
+        
         if not user_agent:
             return
-        if 'Spotify' in user_agent:
+        if 'spotify' in user_agent.lower():
             if http_type == 'GET':
                 spotify_get_response["remoteName"] = self.hostname
                 content = json.dumps(spotify_get_response)
@@ -259,24 +283,37 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                 #    content = json.dumps(spotify_post_response)
                 # elif flag == 'clientKey-valid':
                 #    content = json.dumps(final_spotify_post_response)
-        elif 'youtube' in user_agent:
+        elif 'youtube' in user_agent.lower():
             if http_type == 'GET':
-                #content = youtube_get_response
-                content = chromecast_device_desc_xml
+                content = youtube_get_response.format(self.hostname, MODEL_NAME, LONG_VERSION, UUID_K, PK, self.port)
+                #content = chromecast_device_desc_xml.format(self.server_ip, self.https_port, self.hostname, UUID_K)
         else:
-            content = chromecast_device_desc_xml
+            content = chromecast_device_desc_xml.format(self.server_ip, self.https_port, self.hostname, UUID_K)
             
         self.send_response(200)
-        if 'Spotify' in user_agent:
+        if 'spotify' in user_agent.lower():
             self.send_header("Content-type", "application/json")
-        elif 'youtube' in user_agent:
-            self.send_header("Content-type", "text/xml")
+            self.send_header("Content-Length", len(content))
+            self.send_header("Server", "eSDK")
+            self.send_header("Connection", "keep-alive")
+            #self.send_header("Content-Security-Policy", "frame-ancestors 'none';")
+        elif 'youtube' in user_agent.lower():
+            #if accept_language:
+            self.send_header("Content-Language", "en-US,en;q=0.9")
+            # if content_type:
+            self.send_header("Content-type", 'text/xml; charset="utf-8"')
+            self.send_header("Content-Length", len(content))
+            self.send_header("Connection", "close")
+            self.send_header("User-Agent", self.user_agent)
+            self.send_header("Application-URL", f"http://{self.server_ip}:{self.port}/ws/app/")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
         else:
             self.send_header("Content-type", "text/xml")
-        #self.send_header("Content-Security-Policy", "frame-ancestors 'none';")
-        self.send_header("Server", "eSDK")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("Content-Length", len(content))
+            self.send_header("Content-Length", len(content))
+            self.send_header("Connection", "close")
+            self.send_header("User-Agent", self.user_agent)
+        
         self.end_headers()
         self.wfile.write(content.encode('utf-8'))
 
@@ -284,8 +321,33 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         return #super().log_message(format, *args)
     
     def handle_one_request(self):
-        """Handle a single HTTP request, overridden to support RTSP."""
+        """
+        Handle a single HTTP request, overridden to 
+        support RTSP and TLS detection and redirection. """
         try:
+            #server_ip, port = self.server.server_address
+            # Detect TLS Client Hello
+            if detect_tls_client_hello(self.connection):
+                self.requestline = 'TLS Client Hello detected'
+                self.request_version = 'TLS'
+                if self.https_port: 
+                    self.command = 'TLS Redirect'
+                    self.send_response(200)
+                    self.send_header('Connecton', 'close')
+                    self.send_header('Content-Length','0')
+                    self.send_header('X-TLS-Port', f'{self.https_port}')
+                    self.end_headers()
+                    self.close_connection = True
+                    return
+                else:
+                    self.command = 'HTTP Only'
+                    self.send_response(200)
+                    self.send_header('Set-Cookie', 'sessionId=abc123; HttpOnly; Secure')
+                    self.send_header('Content-Length','0')
+                    self.end_headers()
+                    self.close_connection = True
+                    return
+
             self.raw_requestline = self.rfile.readline(65537)
             if len(self.raw_requestline) > 65536:
                 self.requestline = ''
@@ -361,24 +423,73 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             self.close_connection = self.headers.get('Connection', '').lower() == 'close'
         return True
 
-def create_request_handler_class(allowed_ip, hostname, redirect_path):
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b'Hello, secure world!')
+
+def create_request_handler_class(red_obj):
     class CustomHTTPRequestHandler(HTTPRequestHandler):
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, allowed_ip=allowed_ip, hostname=hostname, redirect_path=redirect_path, **kwargs)
+            super().__init__(*args, red_obj=red_obj, **kwargs)
     return CustomHTTPRequestHandler
+
+def create_ssl_context(certfile, keyfile):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.options |= ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1  # Disable TLS 1.0 and 1.1 if not needed
+    context.load_cert_chain(certfile=certfile, keyfile=keyfile)
+    context.set_ciphers("ECDHE+AESGCM")
+    return context
 
 def start_server(red_obj):
     """
     Threaded function to initialize a custom http server.
     """
-    allowed_ip = red_obj.target_ip
-    ip_address = red_obj.redirect_ip
-    port = red_obj.redirect_port
-    hostname = red_obj.hostname
-    redirect_path = red_obj.redirect_path
+    try:
+        ip_address = red_obj.redirect_ip
+        port = red_obj.redirect_port
 
-    server_class = HTTPServer
-    handler_class = create_request_handler_class(allowed_ip, hostname, redirect_path)
-    server_address = (ip_address, port)
-    httpd = server_class(server_address, handler_class)
-    httpd.serve_forever()
+        server_class = HTTPServer
+        handler_class = create_request_handler_class(red_obj)
+        server_address = (ip_address, port)
+        httpd = server_class(server_address, handler_class)
+        httpd.serve_forever()
+    except OSError:
+        print('[!] ERROR: Failed to start HTTP server.')
+        return
+
+def start_https_server(red_obj):
+    """
+    Threaded function to initialize a custom https server.
+    """
+    try:
+        ip_address = red_obj.redirect_ip
+        port = red_obj.redirect_port_https
+
+        # Paths to your certificate and key files
+        cert_file = red_obj.cert_file
+        key_file = red_obj.key_file
+
+        server_class = HTTPServer
+        # handler_class = create_request_handler_class(allowed_ip, hostname, redirect_path)
+        server_address = (ip_address, port)
+        https_d = server_class(server_address, SimpleHTTPRequestHandler)# handler_class)
+        # Wrap the HTTP server socket with SSL
+        # Create SSL context
+        context = create_ssl_context(cert_file, key_file)
+
+        # Wrap the server socket with SSL
+        https_d.socket = context.wrap_socket(https_d.socket, server_side=True, 
+                                do_handshake_on_connect=True,
+                                suppress_ragged_eofs=True,)
+        print(f"Serving HTTPS on port {port}")
+        https_d.serve_forever()
+    except OSError as e:
+        print(f'[!] ERROR: Failed to start HTTPS server: {e}')
+        return
+    except ssl.SSLError as e:
+        print(f'[!] SSL ERROR: {e}')
+    except Exception as e:
+        print(f'[!] ERROR: {e}')

@@ -17,6 +17,7 @@ import base64
 import hashlib
 import subprocess
 import urllib.request
+from collections import Counter
 from urllib.parse import urlparse, ParseResult
 from urllib.error import URLError
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -179,15 +180,18 @@ def validate_ip(ip):
 
 def validate_port(port):
     """Validate a port number."""
-    return 0 <= port <= 65535
+    return 0 < port <= 65535
 
 class RedirectObject:
-    def __init__(self, red_port, red_ip, tgt_ip, hostname, red_path):
+    def __init__(self, red_port, red_port_https, red_ip, tgt_ip, hostname, red_path, cert_file, key_file):
         self.redirect_port = red_port
+        self.redirect_port_https = red_port_https
         self.redirect_ip = red_ip
         self.target_ip = tgt_ip
         self.hostname = hostname if hostname else HOSTNAME
         self.redirect_path = red_path
+        self.cert_file = cert_file
+        self.key_file = key_file
 
 def load_redirect_yaml(file_path):
     if not os.path.exists(file_path):
@@ -202,6 +206,9 @@ def load_redirect_yaml(file_path):
         sys.exit(0)
 
     redirect_port = config.get('Redirect-Port')
+    redirect_port_https = config.get('Redirect-Port-HTTPS')
+    redirect_https_cert = config.get('HTTPS-Cert')
+    redirect_https_key = config.get('HTTPS-Key')
     redirect_ip = config.get('Redirect-IP')
     target_ip = config.get('Target-IP')
     hostname = config.get('Hostname')
@@ -212,6 +219,19 @@ def load_redirect_yaml(file_path):
     # Validate Redirect-Port
     if not isinstance(redirect_port, int) or not validate_port(redirect_port):
         errors.append(f"Invalid Redirect-Port: {redirect_port}")
+
+    if redirect_port_https and (not isinstance(redirect_port_https, int) or not validate_port(redirect_port_https)):
+        errors.append(f"Invalid Redirect-Port-HTTPS: {redirect_port_https}")
+
+    if redirect_port_https:
+        if not redirect_https_cert:
+            errors.append(f"HTTPS/TLS Cert file missing from config.")
+        elif not os.path.exists(redirect_https_cert):
+            errors.append(f"HTTPS/TLS Cert file does not appear to exist.")
+        if not redirect_https_key:
+            errors.append(f"HTTPS/TLS Key file missing.")
+        elif not os.path.exists(redirect_https_key):
+            errors.append(f"HTTPS/TLS Key file does not appear to exist.")
 
     # Validate Redirect-IP
     if not validate_ip(redirect_ip):
@@ -230,12 +250,14 @@ def load_redirect_yaml(file_path):
         errors.append(f"Invalid Redirect-Path: {redirect_path}")
 
     if errors:
+        print("    The following errors occurred in the configuration file:")
         for error in errors:
-            print(f"[!] ERROR: {error} in config file.")
-            sys.exit(0)
+            print(f"[!] ERROR: {error}.")
+        sys.exit(0)
     else:
         # Return the valid configuration
-        return RedirectObject(redirect_port, redirect_ip, target_ip, hostname, redirect_path)
+        return RedirectObject(redirect_port, redirect_port_https, redirect_ip,
+                            target_ip, hostname, redirect_path, redirect_https_cert, redirect_https_key)
 
 def mac_address_to_bytes(mac_address):
     """
@@ -314,12 +336,13 @@ class ResponseObject:
     """
     An object class to hold data required for response packets.
     """
-    def __init__(self, type_ , unicast, hostname, src_mac, src_ip, src_ipv6, dst_mac, dst_ip, service, srv_port):
+    def __init__(self, type_ , unicast, hostname, src_mac, src_ip, src_ipv6, dst_mac, dst_ip, service, srv_port, srv_port_https):
         self.hostname = hostname
         self.src_mac = src_mac
         self.src_ip = src_ip
         self.src_ipv6 = src_ipv6
         self.srv_port = srv_port if srv_port else 7000
+        self.srv_port_https = srv_port_https
         self.service = service
         self.type_ = type_
         self.unicast = unicast
@@ -362,6 +385,7 @@ class Client:
             self.user_agents = set()
             self.oses = set()
             self.ttl = None
+            self.ttl_values = []
             self.ports = set()
             self.communicants = {}
             self.connections = set()
@@ -437,6 +461,13 @@ def add_port(dst_port: int, cur_client: Client) -> None:
     """
     if dst_port < 40000:
         cur_client.ports.add(dst_port)
+        
+def calculate_mode_ttl(self):
+    # Calculate the mode (most common value) in the list
+    
+    ttl_counter = Counter(self.ttl_values)
+    most_common_ttl = ttl_counter.most_common(1)[0][0]
+    return most_common_ttl
 
 def add_ttl(ttl: int, cur_client: Client) -> None:
     """
@@ -446,7 +477,9 @@ def add_ttl(ttl: int, cur_client: Client) -> None:
     """
     guessed_ttl_start = ttl
 
-    if ttl >= 0 and ttl <= 32:
+    if ttl < 0:
+        return
+    elif ttl >= 0 and ttl <= 32:
         guessed_ttl_start = 32
     elif ttl > 32 and ttl <= 64:
         guessed_ttl_start = 64
@@ -455,7 +488,19 @@ def add_ttl(ttl: int, cur_client: Client) -> None:
     elif ttl > 128:
         guessed_ttl_start = 255
 
-    cur_client.ttl = guessed_ttl_start
+    cur_client.ttl_values.append(guessed_ttl_start)
+
+    if len(cur_client.ttl_values) > 2:
+        ttl_counter = Counter(cur_client.ttl_values)
+        most_common_ttl = ttl_counter.most_common(1)[0][0]
+        average_ttl = most_common_ttl
+    elif len(cur_client.ttl_values) == 2:
+        average_ttl = min(cur_client.ttl_values)
+    else:
+        average_ttl = cur_client.ttl_values[0]
+
+    cur_client.ttl = average_ttl
+
 
 def get_manufacturer(self: Client) -> None:
     """

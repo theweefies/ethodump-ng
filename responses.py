@@ -31,6 +31,10 @@ MDNS_A = 1
 MDNS_AAAA = 28
 MDNS_NSEC = 47
 
+http_response_set_cookie = """HTTP/1.1 200 OK\r\n\
+                              Set-Cookie: sessionId=abc123; HttpOnly; Secure\r\n\
+                              Content-Length: 0\r\n\r\n"""
+
 spotify_get_response = {
         "status": 101,
         "statusString": "OK",
@@ -72,42 +76,41 @@ spotify_post_response_bad_key = {
         "publicKey": PUBLIC_KEY_RSA_B64
     }
 
-youtube_get_response = f"""
+youtube_get_response = """
 <?xml version="1.0"?>
 <root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:sec="http://www.sec.co.kr/dlna" xmlns:dlna="urn:schemas-dlna-org:device-1-0">
-<specVersion>
-<major>1</major>
-<minor>0</minor>
-</specVersion>
-<device>
-<deviceType>urn:dial-multiscreen-org:device:dialreceiver:1</deviceType>
-<friendlyName>{HOSTNAME}</friendlyName>
-<manufacturer>Sony</manufacturer>
-<manufacturerURL>http://www.sony.com/sec</manufacturerURL>
-<modelDescription>Sony DTV RCR</modelDescription>
-<modelName>{MODEL_NAME}</modelName>
-<modelNumber>1.0</modelNumber>
-<modelURL>http://www.sony.com/sec</modelURL>
-<serialNumber>{LONG_VERSION}</serialNumber>
-<UDN>uuid:{UUID_K}</UDN>
-<sec:deviceID>{PK}</sec:deviceID>
-<sec:ProductCap>Resolution:1920X1080,Crystal,Y2023</sec:ProductCap>
-<serviceList>
-<service>
-<serviceType>urn:dial-multiscreen-org:service:dial:1</serviceType>
-<serviceId>urn:dial-multiscreen-org:serviceId:dial</serviceId>
-<controlURL>/RCR/control/dial</controlURL>
-<eventSubURL>/RCR/event/dial</eventSubURL>
-<SCPDURL>dial.xml</SCPDURL>
-</service>
-</serviceList>
-<sec:Capabilities>
-<sec:Capability name="sony:multiscreen:1" port="7678" location="/ms/1.0/"/>
-</sec:Capabilities>
-</device>
+  <specVersion>
+    <major>1</major>
+    <minor>0</minor>
+  </specVersion>
+  <device>
+    <deviceType>urn:dial-multiscreen-org:device:dialreceiver:1</deviceType>
+    <friendlyName>{}</friendlyName>
+    <manufacturer>Sony</manufacturer>
+    <manufacturerURL>http://www.sony.com/sec</manufacturerURL>
+    <modelDescription>Sony DTV RCR</modelDescription>
+    <modelName>{}</modelName>
+    <modelNumber>1.0</modelNumber>
+    <modelURL>http://www.sony.com/sec</modelURL>
+    <serialNumber>{}</serialNumber>
+    <UDN>uuid:{}</UDN>
+    <sec:deviceID>{}</sec:deviceID>
+    <sec:ProductCap>Resolution:1920X1080,Crystal,Y2023</sec:ProductCap>
+    <serviceList>
+      <service>
+        <serviceType>urn:dial-multiscreen-org:service:dial:1</serviceType>
+        <serviceId>urn:dial-multiscreen-org:serviceId:dial</serviceId>
+        <controlURL>/RCR/control/dial</controlURL>
+        <eventSubURL>/RCR/event/dial</eventSubURL>
+        <SCPDURL>dial.xml</SCPDURL>
+      </service>
+    </serviceList>
+    <sec:Capabilities>
+      <sec:Capability name="sony:multiscreen:1" port="{}" location="/ms/1.0/"/>
+    </sec:Capabilities>
+  </device>
 </root>
 """
-
 
 chromecase_test = """
 <?xml version="1.0" encoding="utf-8"?>
@@ -184,13 +187,13 @@ chromecast_device_desc_xml = """"
     <major>1</major>
     <minor>0</minor>
   </specVersion>
-  <URLBase>http://192.168.10.153:70000</URLBase>
+  <URLBase>http://{}:{}</URLBase>
   <device>
     <deviceType>urn:dial-multiscreen-org:device:dial:1</deviceType>
-    <friendlyName>Chromecast1234</friendlyName>
+    <friendlyName>{}</friendlyName>
     <manufacturer>Google Inc.</manufacturer>
     <modelName>Eureka Dongle</modelName>
-    <UDN>uuid:0b92d3ae-9f2a-d875-9e27-8934e2a7e178</UDN>
+    <UDN>uuid:{}</UDN>
     <iconList>
       <icon>
         <mimetype>image/png</mimetype>
@@ -652,19 +655,23 @@ def send_spotify_response(resp: ResponseObject):
 
     return eth_header + ip_header + udp_header + mdns_payload
 
-def send_airplay_response(resp: ResponseObject, type_):
+def send_response(resp: ResponseObject, type_):
     hostname = resp.hostname
     service_name = resp.service
     src_ip = resp.src_ip
     src_ipv6 = resp.src_ipv6
     src_mac = resp.src_mac
     srv_port = resp.srv_port
+    srv_port_https = resp.srv_port_https
     ip_version = resp.type_
     is_unicast = resp.unicast
     NO_IPV6 = 0
 
     if '_googlecast._tcp.local' in service_name:
         service_name = '_googlecast._tcp.local'
+
+    if srv_port_https and 'google' in service_name:
+        srv_port = srv_port_https
 
     top_level_name = hostname
     domain_name = hostname + '.local'
