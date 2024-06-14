@@ -12,7 +12,7 @@ import re
 
 from globals import clean_name, Client, ResponseObject, RedirectObject
 from models import samsung_models, apple_models, hp_models, roku_models
-from responses import send_response, send_spotify_response, send_query
+from responses import send_response, send_spotify_response
 
 MDNS_PTR = 12
 MDNS_TXT = 16

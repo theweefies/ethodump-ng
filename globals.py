@@ -461,13 +461,6 @@ def add_port(dst_port: int, cur_client: Client) -> None:
     """
     if dst_port < 40000:
         cur_client.ports.add(dst_port)
-        
-def calculate_mode_ttl(self):
-    # Calculate the mode (most common value) in the list
-    
-    ttl_counter = Counter(self.ttl_values)
-    most_common_ttl = ttl_counter.most_common(1)[0][0]
-    return most_common_ttl
 
 def add_ttl(ttl: int, cur_client: Client) -> None:
     """

@@ -37,7 +37,7 @@ from netbios import parse_netbios_datagram, parse_netbios_packet
 from ssdp import parse_ssdp_packet
 from tcp_udp import *
 from tls import find_ja3_classification, parse_tls_payload
-from responses import create_igmp_membership_report
+from responses import create_igmp_membership_report, send_mdns_query
 
 GRAB_RESOURCES = False
 TARGET_IP = None
@@ -802,34 +802,17 @@ def mdns_redirect(own_iface: Interface, red_object: RedirectObject) -> None:
     except OSError as e:
         print(f'[!] ERROR: Problem creating socket on {own_iface.interface_name} for sending mdns traffic.')
         return
-    
-    try:
-        # Create a UDP socket
-        igmp_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0x0800)
-        igmp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, bytes(own_iface.interface_name, 'utf-8'))
-        igmp_socket.bind((own_iface.interface_name, 0))
-    except OSError as e:
-        print(f'[!] ERROR: Problem creating socket on {own_iface.interface_name} for sending igmp multicast membership reports.')
-        return
-
-    start_time = time.time()
 
     while not flags.exit_flag:
         try:
             ipv, pkt, dst_mac, dst_ip = mdns_queue.get(timeout=1)
             prepare_redirect(mdns_socket, ipv, dst_mac, dst_ip, pkt, own_iface, red_object)
             mdns_queue.task_done()
-            
-            # Calculate the elapsed time
-            elapsed_time = time.time() - start_time
-            if elapsed_time >= 10:
-                create_igmp_membership_report(own_iface, igmp_socket)
-                start_time = time.time()
+
         except queue.Empty:
             continue
 
     mdns_socket.close()
-    igmp_socket.close()
 
 def handle_http() -> None:
     while not flags.exit_flag:
@@ -951,16 +934,28 @@ if __name__ == "__main__":
     # Thread to parse http/tcp payloads for json, xml, and other juicy tidbits
     http_thread = threading.Thread(target=handle_http, daemon=True).start()
 
+        
+    try:
+        # Create a UDP socket
+        query_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0x0800)
+        query_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, bytes(iface.interface_name, 'utf-8'))
+        query_socket.bind((iface.interface_name, 0))
+    except OSError as e:
+        print(f'[!] ERROR: Problem creating socket on {iface.interface_name} for sending query/report packets.')
+
     try:
         while not flags.exit_flag:
-            # could use this as a timer of sorts
             time.sleep(10)
+            create_igmp_membership_report(iface, query_socket)
+            send_mdns_query(iface, query_socket)
             pass
 
     except KeyboardInterrupt:
         flags.exit_flag = True
         print("\nCTRL+C pressed, shutting down...")
     
+    query_socket.close()
+
     if write_thread:
         packets_left = write_queue.qsize()
         while write_queue.qsize() > 0:

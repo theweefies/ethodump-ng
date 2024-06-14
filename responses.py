@@ -580,8 +580,12 @@ def build_udp_header(mdns_len: int, mdns_payload: bytes, src_ip: str, dst_ip: st
 
     udp_payload_len = UDP_HEADER_LEN + mdns_len
     udp_header = create_udp_header(5353, 5353, udp_payload_len, 0)
-    checksum = udp_checksum(src_ip, dst_ip, udp_payload_len, udp_header, mdns_payload)
     
+    try:
+      checksum = udp_checksum(src_ip, dst_ip, udp_payload_len, udp_header, mdns_payload)
+    except OSError:
+      checksum = udp_ipv6_checksum(src_ip, dst_ip, udp_payload_len, udp_header, mdns_payload)
+
     return create_udp_header(5353, 5353, udp_payload_len, checksum)
 
 def send_spotify_response(resp: ResponseObject):
@@ -734,49 +738,53 @@ def send_response(resp: ResponseObject, type_):
 
     return eth_header + ip_header + udp_header + mdns_payload
 
-def send_query(resp: ResponseObject):
-    service_name = resp.service
-    src_ip = resp.src_ip
-    src_ipv6 = resp.src_ipv6
-    src_mac = resp.src_mac
-    ip_version = resp.type_
+def send_mdns_query(own_iface, skt: socket.socket):
+  """
+  Function to build and send mdns service discovery packets.
+  """
+  src_ip = own_iface.ip
+  src_ipv6 = own_iface.ipv6
+  src_mac = own_iface.mac
 
-    name_field = encode_mdns_name(service_name)
-
+  discovery_services = [
+      '_services._dns-sd._udp.local',
+      'lb._dns-sd._udp.local'
+      ]
+  for service_name in discovery_services:
+    
     mdns_payload = b''
-
     mdns_payload = build_mdns_header(mdns_payload, 0x8400, 0, 0, 1)
-
-    mdns_payload = build_ptr_record(mdns_payload, name_field, None)
-
+    mdns_payload = build_ptr_record(mdns_payload, service_name, None)
     mdns_len = len(mdns_payload)
 
-    if ip_version == 4:
-        # ethernet header
-        eth_header = build_eth_header(src_mac, MULTICAST_MAC)
+    # Build IPv4 packet
+    # ethernet header
+    eth_header = build_eth_header(src_mac, MULTICAST_MAC)
+    # ip header
+    dst_ip = MULTICAST_IP
+    ip_header = build_ipv4_header(mdns_len, src_ip, dst_ip)        
+    # udp header
+    udp_header = build_udp_header(mdns_len, mdns_payload, src_ip, dst_ip)
+    # final packet build
+    ipv4_pkt = eth_header + ip_header + udp_header + mdns_payload
 
-        # ip header
-        dst_ip = MULTICAST_IP
-        ip_header = build_ipv4_header(mdns_len, src_ip, dst_ip)        
-        
-        # udp header
-        udp_header = build_udp_header(mdns_len, mdns_payload, src_ip, dst_ip)
+    skt.send(ipv4_pkt)
 
-    elif ip_version == 6 and src_ipv6:
-        # ethernet header
-        dst_mac = IPV6_MULTICAST_MAC
-        eth_header = build_eth_header(src_mac, dst_mac, eth_type=0x86dd)
+    if src_ipv6:
+      # ethernet header
+      dst_mac = IPV6_MULTICAST_MAC
+      eth_header = build_eth_header(src_mac, dst_mac, eth_type=0x86dd)
+      # ipv6 header
+      dst_ip = IPV6_MULTICAST_IP
+      ip_header = build_ipv6_header(mdns_len, src_ipv6, dst_ip)
+      # UDP header
+      udp_header = build_udp_header(mdns_len, mdns_payload, src_ipv6, dst_ip)
+      # final packet build
+      ipv6_pkt = eth_header + ip_header + udp_header + mdns_payload
 
-        # ip header
-        dst_ip = IPV6_MULTICAST_IP
-        ip_header = build_ipv6_header(mdns_len, src_ipv6, dst_ip)
+      skt.send(ipv6_pkt)
 
-        udp_header = build_udp_header(mdns_len, mdns_payload, src_ipv6, dst_ip)
-
-    else:
-        return None
-
-    return eth_header + ip_header + udp_header + mdns_payload
+  return 
 
 """
 
