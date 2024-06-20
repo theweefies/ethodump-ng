@@ -42,6 +42,7 @@ IPV4_ANY_ADDRESS = '0.0.0.0'
 IPV6_ANY_ADDRESS = '::'
 ETH_BCAST_ADDRESS = 'ff:ff:ff:ff:ff:ff'
 ETH_ANY_ADDRESS = '00:00:00:00:00:00'
+SPAN_TREE_ADDRESS = '01:80:c2:00:00:00'
 
 clients = {}
 oui_table = {}
@@ -84,6 +85,11 @@ def generate_hex_string(length):
     
     return hex_string
 
+def generate_base32_id(length=26):
+    random_bytes = os.urandom(length)
+    base32_id = base64.b32encode(random_bytes).decode('utf-8').rstrip('=').lower()
+    return base32_id[:length]
+
 def generate_random_public_key():
     # Generate a random 8-byte string and encode it to Base64
     random_bytes = bytes(random.getrandbits(8) for _ in range(8))
@@ -112,6 +118,7 @@ def generate_random_version_string():
     version_string = f"{major}.{minor}.{patch}-g{hash_part}"
     return version_string
 
+BASE32 = generate_base32_id()
 RANDOM_MAC = generate_random_mac()
 SHA1_HASH = generate_sha1_hash(RANDOM_MAC)
 PK = generate_hex_string(64)
@@ -166,6 +173,9 @@ def is_multicast_or_broadcast(mac_address: str) -> bool:
     """
     if mac_address == ETH_BCAST_ADDRESS:
         return True  # Broadcast address
+    elif mac_address == SPAN_TREE_ADDRESS:
+        return True
+
     # Split the MAC address string into octets and take the first one
     first_octet_str = mac_address.split(':')[0]  # Assuming MAC address is separated by ':'
     # Convert the first octet to an integer

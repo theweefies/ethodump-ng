@@ -76,7 +76,7 @@ spotify_post_response_bad_key = {
         "publicKey": PUBLIC_KEY_RSA_B64
     }
 
-youtube_get_response = """
+youtube_get_response_init = """
 <?xml version="1.0"?>
 <root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:sec="http://www.sec.co.kr/dlna" xmlns:dlna="urn:schemas-dlna-org:device-1-0">
   <specVersion>
@@ -110,6 +110,112 @@ youtube_get_response = """
     </sec:Capabilities>
   </device>
 </root>
+"""
+
+youtube_get_response_webserver_stopped = """
+<?xml version="1.0" encoding="UTF-8"?>
+<service xmlns="urn:dial-multiscreen-org:schemas:dial" dialVer="2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+  <name>YouTube</name>
+  <options allowStop="true"/>
+  <state>stopped</state>
+  <version>2.1.516</version>
+  <link rel="run" href="run"/>
+</service>
+"""
+
+youtube_get_response_webserver_running = """
+<?xml version="1.0" encoding="UTF-8"?>
+<service xmlns="urn:dial-multiscreen-org:schemas:dial" dialVer="2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+  <name>YouTube</name>
+  <options allowStop="true"/>
+  <state>running</state>
+  <version>2.1.516</version>
+  <link rel="run" href="run"/>
+</service>"""
+
+youtube_get_response_webserver_session_established = """
+<?xml version="1.0" encoding="UTF-8"?>
+<service xmlns="urn:dial-multiscreen-org:schemas:dial" dialVer="2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+  <name>YouTube</name>
+  <options allowStop="true"/>
+  <state>running</state>
+  <version>2.1.516</version>
+  <link rel="run" href="run"/>
+  <additionalData>
+    <testYWRkaXR>c0ef1ca</testYWRkaXR>
+    <brand>Sony</brand>
+    <model>{}</model>
+    <yumi>AVHKRBRCl_rxrqgXVccVe7lM-krXuuosv5PW6-8-CStvVE_BX_1bXpoDF_IMHVjYmiRInpjwTYYkJVImtmx4pRpznmblBfTgWPh2tE3eqULo6naW4lNqytcHDqdOSY40</yumi>
+    <screenId>{}</screenId>
+    <theme>{}</theme>
+    <deviceId>{}</deviceId>
+    <passiveSessionId>{}</passiveSessionId>
+  </additionalData>
+</service>
+"""
+
+youtube_get_response_webserver_prober_id = """
+<?xml version="1.0" encoding="UTF-8"?>
+<service xmlns="urn:dial-multiscreen-org:schemas:dial" dialVer="2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+  <name>YouTube</name>
+  <options allowStop="true"/>
+  <state>running</state>
+  <version>2.1.516</version>
+  <link rel="run" href="run"/>
+  <additionalData>
+    <testYWRkaXR>c0ef1ca</testYWRkaXR>
+    <brand>Sony</brand>
+    <model>{}</model>
+    <yumi>AVHKRBRCl_rxrqgXVccVe7lM-krXuuosv5PW6-8-CStvVE_BX_1bXpoDF_IMHVjYmiRInpjwTYYkJVImtmx4pRpznmblBfTgWPh2tE3eqULo6naW4lNqytcHDqdOSY40</yumi>
+    <screenId>{}</screenId>
+    <theme>{}</theme>
+    <deviceId>{}</deviceId>
+    <passiveSessionId>{}</passiveSessionId>
+    <proberData>{}</proberData>
+  </additionalData>
+</service>
+"""
+
+youtube_get_response_webserver_auth = """
+<?xml version="1.0" encoding="UTF-8"?>
+<service xmlns="urn:dial-multiscreen-org:schemas:dial" dialVer="2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+  <name>YouTube</name>
+  <options allowStop="true"/>
+  <state>running</state>
+  <version>2.1.516</version>
+  <link rel="run" href="run"/>
+  <additionalData>
+    <testYWRkaXR>c0ef1ca</testYWRkaXR>
+    <brand>Sony</brand>
+    <model>{}</model>
+    <yumi>AVHKRBRCl_rxrqgXVccVe7lM-krXuuosv5PW6-8-CStvVE_BX_1bXpoDF_IMHVjYmiRInpjwTYYkJVImtmx4pRpznmblBfTgWPh2tE3eqULo6naW4lNqytcHDqdOSY40</yumi>
+    <screenId>{}</screenId>
+    <theme>{}</theme>
+    <deviceId>{}</deviceId>
+    <passiveSessionId>{}</passiveSessionId>
+    <proberData>{}</proberData>
+    <passiveAuthCode>GLD-LNV-PBB</passiveAuthCode>
+    <expectedPairingNumber>28</expectedPairingNumber>
+  </additionalData>
+</service>
+"""
+
+
+youtube_get_response_webserver = """
+<?xml version="1.0" encoding="UTF-8"?>
+<service xmlns="urn:dial-multiscreen-org:schemas:dial" dialVer="2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+  <name>YouTube</name><options allowStop="true"/>
+  <state>stopped</state>
+  <version>2.1.516</version>
+  <link rel="run" href="run"/>
+  <additionalData>
+    <testYWRkaXR>c0ef1ca</testYWRkaXR>
+    <brand>Sony</brand>
+    <model>{}</model>
+	<yumi>AVHKRBSmTDyuKasMKyQMq9tjS7rlnebQr7VPhwpNAZfGSF7s6NqYlPTQRvStsrIdGf6vMpJnpb-Nb6rzocpps3vmR9aPePDPKrJ1iafzB4K_2wUo-T3tc4zWpGOqqBtM</yumi>       
+	<passiveSessionId>{}</passiveSessionId>
+  </additionalData>
+</service>
 """
 
 chromecase_test = """
@@ -466,7 +572,8 @@ def build_txt_record(mdns_payload: bytes, full_name: str, service: str, src_mac:
     elif service == AIRPLAY:
         txt_payload_len, txt_payload = build_airplay_txt_payload(src_mac)
     elif service == GOOGLECAST:
-        txt_payload_len, txt_payload = build_googlecast_txt_payload(src_mac, hostname)
+        txt_payload_len, txt_payload = build_airplay_txt_payload(src_mac)
+        #txt_payload_len, txt_payload = build_googlecast_txt_payload(src_mac, hostname)
 
     mdns_payload += txt_payload_len
     mdns_payload += txt_payload

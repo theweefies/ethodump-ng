@@ -5,6 +5,7 @@ Module to handle HTTP packets for ethodump-ng.
 """
 import re
 import ssl
+import time
 import datetime
 import json
 import logging
@@ -15,11 +16,26 @@ from urllib.parse import urlparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from http.client import HTTPMessage, parse_headers
 
-from globals import grab_resource, GENERIC_UPNP_UA, check_make_path, HOSTNAME, UUID_K, LONG_VERSION, PK, MODEL_NAME
+from globals import (grab_resource, GENERIC_UPNP_UA, check_make_path, 
+                     HOSTNAME, UUID_K, LONG_VERSION, PK, MODEL_NAME, BASE32)
 from models import apple_models, banner_signatures
-from responses import spotify_get_response, final_spotify_post_response, youtube_get_response, chromecast_device_desc_xml
+from responses import (spotify_get_response, final_spotify_post_response,
+    youtube_get_response_init, chromecast_device_desc_xml, youtube_get_response_webserver_stopped,
+    youtube_get_response_webserver_running, youtube_get_response_webserver_session_established,
+    youtube_get_response_webserver_prober_id, youtube_get_response_webserver_auth)
 
 logging.basicConfig(level=logging.DEBUG)
+
+SESSION_NONE        = 0
+SESSION_STOPPED     = 1
+SESSION_RUNNING     = 2
+SESSION_ESTABLISHED = 3
+SESSION_PROBE       = 4
+SESSION_AUTH        = 5
+SESSION_IDLE        = 6
+SESSION_STATE = SESSION_NONE
+
+post_preserve = {}
 
 def x_www_decode(payload: str):
     if not payload or type(payload) != str:
@@ -222,6 +238,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         return self.server_version
 
     def do_GET(self):
+        global SESSION_STATE
         headers = {}
         if self.allowed_ip and self.client_address[0] != self.allowed_ip:
             self.send_response(403)  # Forbidden
@@ -235,10 +252,36 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         for type_,val in self.headers.items():
             headers[type_] = val
         if self.redirect_path in self.path:
-            self.serve_resource("GET", headers)
+            self.serve_resource("GET", headers, flag=None)
+        elif '/ws/app' in self.path:
+            if SESSION_STATE == SESSION_NONE:
+                self.serve_resource("GET", headers, flag=None)
+                SESSION_STATE = SESSION_STOPPED
+            elif SESSION_STATE == SESSION_STOPPED:
+                self.serve_resource("GET", headers, flag=SESSION_STOPPED)
+                SESSION_STATE = SESSION_RUNNING
+            elif SESSION_STATE == SESSION_RUNNING:
+                self.serve_resource("GET", headers, flag=SESSION_RUNNING)
+                SESSION_STATE = SESSION_ESTABLISHED
+            elif SESSION_STATE == SESSION_ESTABLISHED:
+                self.serve_resource("GET", headers, flag=SESSION_ESTABLISHED)
+                SESSION_STATE = SESSION_PROBE
+            elif SESSION_STATE == SESSION_PROBE:
+                self.serve_resource("GET", headers, flag=SESSION_PROBE)
+                SESSION_STATE = SESSION_AUTH
+            elif SESSION_STATE == SESSION_AUTH:
+                self.serve_resource("GET", headers, flag=SESSION_AUTH)
+                SESSION_STATE = SESSION_IDLE
+            else:
+                self.serve_resource("GET", headers, flag=SESSION_ESTABLISHED)
+            
+        else:
+            return
 
     def do_POST(self):
+        global SESSION_STATE, post_preserve
         headers = {}
+        flag = None
         if self.allowed_ip and self.client_address[0] != self.allowed_ip:
             self.send_response(403)  # Forbidden
             self.end_headers()
@@ -257,22 +300,36 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         payload = post_data.decode('utf-8')
         print(f"Payload:\n{payload}")
         decoded_dict = x_www_decode(payload)
-        client_key = decoded_dict.get("clientKey")
-        if not client_key:
-            flag = 'clientKey-invalid'
-        else:
-            flag = 'clientKey-valid'
+        user_agent = headers.get('User-Agent')
+        
+        if user_agent:
+            if 'spotify' in user_agent.lower():
+                client_key = decoded_dict.get("clientKey")
+                if not client_key:
+                    flag = 'clientKey-invalid'
+                else:
+                    flag = 'clientKey-valid'
+            if 'youtube' in user_agent.lower():
+                SESSION_STATE = SESSION_RUNNING
+                flag = post_preserve = decoded_dict
 
         self.serve_resource("POST", headers, flag)
 
     def serve_resource(self, http_type, headers: dict, flag=None):
+        global post_preserve
         user_agent = headers.get('User-Agent')
         content_type = headers.get('Content-Type')
         accept_language = headers.get('Accept-Language')
         origin = headers.get('Origin')
+
+        timenow = time.gmtime()
+        # Format the current time to the specified format
+        formatted_time = time.strftime("%a, %d %b %Y %H:%M:%S GMT", timenow)
         
         if not user_agent:
             return
+        
+        # Content control block
         if 'spotify' in user_agent.lower():
             if http_type == 'GET':
                 spotify_get_response["remoteName"] = self.hostname
@@ -284,30 +341,76 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                 # elif flag == 'clientKey-valid':
                 #    content = json.dumps(final_spotify_post_response)
         elif 'youtube' in user_agent.lower():
-            if http_type == 'GET':
-                content = youtube_get_response.format(self.hostname, MODEL_NAME, LONG_VERSION, UUID_K, PK, self.port)
+            if http_type == "GET" and not flag:
+                content = youtube_get_response_init.format(
+                    self.hostname, MODEL_NAME, LONG_VERSION, UUID_K, PK, self.port
+                    )
                 #content = chromecast_device_desc_xml.format(self.server_ip, self.https_port, self.hostname, UUID_K)
+            elif http_type == "GET" and flag == SESSION_STOPPED:
+                content = youtube_get_response_webserver_stopped
+            elif http_type == "GET" and flag == SESSION_RUNNING:
+                content = youtube_get_response_webserver_running
+            elif http_type == "GET" and flag == SESSION_ESTABLISHED:
+                theme = post_preserve.get('theme')
+                content = youtube_get_response_webserver_session_established.format(
+                    MODEL_NAME, BASE32, theme if theme else 'cl', PK, UUID_K
+                    )
+            elif http_type == "GET" and flag in [SESSION_PROBE,SESSION_IDLE]:
+                theme = post_preserve.get('theme')
+                content = youtube_get_response_webserver_prober_id.format(
+                    MODEL_NAME, BASE32, theme if theme else 'cl', PK, UUID_K, UUID_K.upper()
+                    )
+            elif http_type == "GET" and flag == SESSION_AUTH:
+                theme = post_preserve.get('theme')
+                content = youtube_get_response_webserver_auth.format(
+                    MODEL_NAME, BASE32, theme if theme else 'cl', PK, UUID_K, UUID_K.upper()
+                    )
+            elif http_type == "POST":
+                content = f'http://{self.server_ip}:{self.port}/ws/apps/YouTube/run'
         else:
             content = chromecast_device_desc_xml.format(self.server_ip, self.https_port, self.hostname, UUID_K)
-            
-        self.send_response(200)
+
+        # Header composition block 
+        
         if 'spotify' in user_agent.lower():
+            self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.send_header("Content-Length", len(content))
             self.send_header("Server", "eSDK")
             self.send_header("Connection", "keep-alive")
             #self.send_header("Content-Security-Policy", "frame-ancestors 'none';")
         elif 'youtube' in user_agent.lower():
-            #if accept_language:
-            self.send_header("Content-Language", "en-US,en;q=0.9")
-            # if content_type:
-            self.send_header("Content-type", 'text/xml; charset="utf-8"')
+            if http_type == 'POST':
+                self.send_response(201,"Created")
+            else:
+                self.send_response(200)
+            if not flag:
+                self.send_header("Content-Language", "en-US,en;q=0.9")
+            else:
+                self.send_header("API-Version", "v1.00")
+            if http_type == 'POST':
+                self.send_header("Content-type", "text/html")
+                self.send_header("LOCATION", f'http://{self.server_ip}:{self.port}/ws/apps/YouTube/run')
+            else:
+                self.send_header("Content-type", 'text/xml; charset="utf-8"')
+            
+            if flag:
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            
             self.send_header("Content-Length", len(content))
-            self.send_header("Connection", "close")
-            self.send_header("User-Agent", self.user_agent)
-            self.send_header("Application-URL", f"http://{self.server_ip}:{self.port}/ws/app/")
-            if origin:
+            
+            if not flag:
+                self.send_header("Connection", "close")
+                self.send_header("User-Agent", self.user_agent)
+                self.send_header("Application-URL", f"http://{self.server_ip}:{self.port}/ws/app/")
+
+            if origin and not flag:
                 self.send_header("Access-Control-Allow-Origin", origin)
+
+            if flag:
+                self.send_header("Date", formatted_time)
+                self.send_header("Server", "WebServer")
         else:
             self.send_header("Content-type", "text/xml")
             self.send_header("Content-Length", len(content))
@@ -340,6 +443,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                     self.close_connection = True
                     return
                 else:
+                    return
                     self.command = 'HTTP Only'
                     self.send_response(200)
                     self.send_header('Set-Cookie', 'sessionId=abc123; HttpOnly; Secure')

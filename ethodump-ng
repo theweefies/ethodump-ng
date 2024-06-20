@@ -14,7 +14,7 @@ import select
 import socket
 import struct
 import sys
-import shutil
+import fcntl
 import termios
 import threading
 import time
@@ -104,6 +104,16 @@ class StatusInfo:
         self.pcap_read = ""
         self.lower_status = ""
 
+def get_terminal_size():
+    try:
+        TIOCGWINSZ = termios.TIOCGWINSZ
+        buf = struct.pack("HHHH", 0, 0, 0, 0)
+        result = fcntl.ioctl(1, TIOCGWINSZ, buf)
+        rows, cols, xpixels, ypixels = struct.unpack("HHHH", result)
+        return rows, cols
+    except Exception as e:
+        return None, None
+
 def hide_cursor() -> None:
     """
     Function to hide the cursor.
@@ -146,11 +156,15 @@ def handle_key_press(key: str) -> None:
     if key == '\x1b[D': # LEFT-ARROW
         if flags.playback_speed != 1:
             flags.playback_speed -= 1
-            print(f'Playback speed: {flags.playback_speed}x ', end='\r')
+            #print(f'Playback speed: {flags.playback_speed}x ', end='\r')
+            status_info.lower_status = ""
+            status_info.lower_status = f'Playback speed: {flags.playback_speed}x '
     elif key == '\x1b[C': # RIGHT-ARROW
         if flags.playback_speed != 50:
             flags.playback_speed += 1
-            print(f'Playback speed: {flags.playback_speed}x ', end='\r')
+            #print(f'Playback speed: {flags.playback_speed}x ', end='\r')
+            status_info.lower_status = ""
+            status_info.lower_status = f'Playback speed: {flags.playback_speed}x '
     elif key == '\x1b':  # ESC key
         print("\n[!] ESC key pressed, exiting...                        ")
         flags.exit_flag = True
@@ -218,7 +232,7 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
         if not flags.paused:
 
             # Get the terminal size
-            rows, columns = shutil.get_terminal_size()
+            rows, columns = get_terminal_size()
 
             clients_dict = clients_.copy()
             #with flags.lock:
@@ -330,6 +344,9 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
                         display_body += DEFAULT
                     elif client_data.color:
                         display_body += DEFAULT
+            
+            display_body += " " * len(header) + "\n"
+            display_body += status_info.lower_status + "\n"
             display_body += "\n\n"
             sys.stdout.write(display_body)
             sys.stdout.flush()
@@ -359,6 +376,8 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
 
     reader = BytesIO(p)
     eth_header = parse_eth_header(reader)
+    if not eth_header:
+        return
 
     if True: #not is_self_L2(eth_header.src_mac, own_iface.mac):
         if eth_header.src_mac not in clients:
@@ -376,6 +395,10 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
         # increase packet count for this client
         if not isinstance(cur_client, dict):
             cur_client.count += 1
+
+        if isinstance(eth_header, SPANNINGTreePacket):
+            cur_client.protocols.add('SPANNING TREE')
+            return
 
         if eth_header.eth_type == ARP_P:
             arp_packet = parse_arp(reader)
@@ -565,7 +588,7 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     if not dhcpv6_packet:
                         write_packet(p, "ethodebug.pcap")
                     else:
-                        extract_dhcpv6_client_details(dhcpv6_packet.options, cur_client)
+                        extract_dhcpv6_client_details(dhcpv6_packet, cur_client)
                     cur_client.protocols.add('DHCPv6')
                     return
 
@@ -934,27 +957,29 @@ if __name__ == "__main__":
     # Thread to parse http/tcp payloads for json, xml, and other juicy tidbits
     http_thread = threading.Thread(target=handle_http, daemon=True).start()
 
-        
-    try:
-        # Create a UDP socket
-        query_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0x0800)
-        query_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, bytes(iface.interface_name, 'utf-8'))
-        query_socket.bind((iface.interface_name, 0))
-    except OSError as e:
-        print(f'[!] ERROR: Problem creating socket on {iface.interface_name} for sending query/report packets.')
+    if not args.read_pcap:
+        try:
+            # Create a UDP socket
+            query_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0x0800)
+            query_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, bytes(iface.interface_name, 'utf-8'))
+            query_socket.bind((iface.interface_name, 0))
+        except OSError as e:
+            print(f'[!] ERROR: Problem creating socket on {iface.interface_name} for sending query/report packets.')
 
     try:
         while not flags.exit_flag:
             time.sleep(10)
-            create_igmp_membership_report(iface, query_socket)
-            send_mdns_query(iface, query_socket)
+            if not args.read_pcap:
+                create_igmp_membership_report(iface, query_socket)
+                send_mdns_query(iface, query_socket)
             pass
 
     except KeyboardInterrupt:
         flags.exit_flag = True
         print("\nCTRL+C pressed, shutting down...")
     
-    query_socket.close()
+    if not args.read_pcap:
+        query_socket.close()
 
     if write_thread:
         packets_left = write_queue.qsize()

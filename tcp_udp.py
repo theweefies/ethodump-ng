@@ -16,6 +16,8 @@ import time
 os_sample_count = {}
 
 ALLOWED_IP = None
+SPAN_TREE = b'\x01\x80\xc2\x00\x00\x00'
+
 if sys.version_info < (3,):
     compat_ord = ord
 else:
@@ -116,6 +118,31 @@ class UDPHeader:
     length: int
     checksum: bytes
     payload_length: int
+
+@dataclass
+class SPANNINGTreePacket:
+    dst_mac: str
+    src_mac: str
+    length: int
+    llc_dsap: int
+    llc_ssap: int
+    llc_ctrl_field: int
+    proto_id: int
+    proto_ver_id: int
+    bpdu_type: int
+    bpdu_flags: int
+    root_bridge_pri: int
+    root_bridge_system_id_ext: int
+    root_bridge_system_id: str
+    root_path_cost: int
+    bridge_priority: int
+    bridge_system_id_ext: int
+    bridge_system_id: str
+    port_id: int
+    message_age: int
+    max_age: int
+    hello_time: int
+    forward_delay: int
 
 """
 NOTE: TCP FINGERPRINT FUNCTIONS
@@ -463,6 +490,53 @@ def checksum(data):
 NOTE: PACKET PARSING FUNCTIONS
 """
 
+def parse_spanning_tree(data: bytes, reader: BytesIO) -> SPANNINGTreePacket | None:
+
+    dst_mac_bytes, src_mac_bytes, length = struct.unpack('!6s6s2s', data)
+    dst_mac = bytes_to_mac(dst_mac_bytes)
+    src_mac = bytes_to_mac(src_mac_bytes)
+
+    llc = reader.read(3)
+    if len(llc) < 3:
+        return None
+    llc_dsap = llc[0]
+    llc_ssap = llc[1]
+    llc_ctrl_field = llc[2]
+
+    stp_header = reader.read(5)
+    if len(stp_header) < 5:
+        return None
+    proto_id, proto_ver_id, bpdu_type, bpdu_flags = struct.unpack("!HBBB", stp_header)
+
+    root_bridge_element = reader.read(8)
+    if len(root_bridge_element) < 8:
+        return None
+    root_bridge_system_id_ext = root_bridge_element[1]
+    root_bridge_pri, root_bridge_system_id = struct.unpack("!H6s", root_bridge_element)
+    root_bridge_system_id = bytes_to_mac(root_bridge_system_id)
+
+    root_path_cost = reader.read(1)
+    if len(root_path_cost) < 1:
+        return None
+
+    bridge_element = reader.read(8)
+    if len(root_bridge_element) < 8:
+        return None
+    bridge_system_id_ext = bridge_element[1]
+    bridge_pri, bridge_system_id = struct.unpack("!H6s", bridge_element)
+    bridge_system_id = bytes_to_mac(bridge_system_id)
+
+    footer_data = reader.read(10)
+    if len(footer_data) < 10:
+        return None
+    port_id, message_age, max_age, hello_time, forward_delay = struct.unpack("!HHHHH", footer_data)
+
+    return SPANNINGTreePacket(dst_mac, src_mac, length, llc_dsap, llc_ssap, llc_ctrl_field,\
+                            proto_id, proto_ver_id, bpdu_type, bpdu_flags, root_bridge_pri,\
+                            root_bridge_system_id_ext, root_bridge_system_id, root_path_cost,\
+                            bridge_pri, bridge_system_id_ext, bridge_system_id, port_id,\
+                            message_age, max_age, hello_time, forward_delay)
+
 def parse_eth_header(reader: BytesIO) -> ETHHeader | None:
     """
     Ethernet Header Parsing Function
@@ -470,6 +544,14 @@ def parse_eth_header(reader: BytesIO) -> ETHHeader | None:
     data = reader.read(14)
     if len(data) < 14:
         return None
+    
+    if data[:6] == SPAN_TREE:
+        span_tree_packet = parse_spanning_tree(data, reader)
+        if not span_tree_packet:
+            return None
+        else:
+            return span_tree_packet
+
     dst_mac_bytes, src_mac_bytes, eth_type = struct.unpack('!6s6s2s', data)
     dst_mac = bytes_to_mac(dst_mac_bytes)
     src_mac = bytes_to_mac(src_mac_bytes)
