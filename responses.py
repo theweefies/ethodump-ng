@@ -323,7 +323,8 @@ chromecast_device_desc_xml = """"
 """
 
 def create_igmp_membership_report(own_iface, skt: socket.socket):
-
+    if not own_iface.mac or not own_iface.ip:
+        return
     src_mac = mac_address_to_bytes(own_iface.mac)
     src_ip = socket.inet_aton(own_iface.ip)
     multicast_ip = socket.inet_aton(MULTICAST_IP)
