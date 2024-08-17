@@ -24,6 +24,9 @@ from io import BytesIO
 
 import netifaces
 
+from tp_link import parse_tp_link
+from ubiquiti import parse_ubiquiti
+from dhip import parse_dhip
 from arp import parse_arp, process_arp
 from dhcp import *
 from dns_ import parse_dns_packet, process_dns_packet
@@ -510,6 +513,19 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                         process_mndp_packet(mndp_packet, cur_client)
                     cur_client.protocols.add('MNDP')
                     return
+                
+                elif udp_header.src_port == 10001 or udp_header.dst_port == 10001:
+                    parse_ubiquiti(payload, cur_client)
+                    return
+                
+                elif udp_header.src_port == 20002 or udp_header.dst_port == 20002:
+                    parse_tp_link(payload, cur_client)
+                    return
+
+                elif len(payload) >= 8:
+                    if payload[:8] == DHIP_HEADER:
+                        parse_dhip(payload, cur_client)
+                        return
 
             elif ip_header.protocol == 6: # TCP
                 tcp_header = parse_tcp_header(reader)
@@ -592,14 +608,14 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     cur_client.protocols.add('DHCPv6')
                     return
 
-                if udp_header.dst_port == 1900:
+                elif udp_header.dst_port == 1900:
                     ssdp_packet = parse_ssdp_packet(payload, cur_client, GRAB_RESOURCES)
                     if not ssdp_packet:
                         write_packet(p, "ethodebug.pcap")
                     cur_client.protocols.add('SSDP')
                     return
 
-                if udp_header.src_port == 5353: # MDNS
+                elif udp_header.src_port == 5353: # MDNS
                     mdns_packet = parse_mdns_packet(payload)
                     if not mdns_packet:
                         write_packet(p, "ethodebug.pcap")
@@ -610,6 +626,10 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     cur_client.protocols.add('MDNSv6')
                     return
 
+                elif len(payload) >= 8:
+                    if payload[:8] == DHIP_HEADER:
+                        parse_dhip(payload, cur_client)
+
             elif ipv6_header.next_header == 0 or ipv6_header.next_header == 58: #ICMPv6
                 icmpv6_packet = parse_icmpv6(reader)
                 if not icmpv6_packet:
@@ -618,6 +638,12 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     process_icmpv6_packet(icmpv6_packet, cur_client)
                 cur_client.protocols.add('ICMPv6')
                 return
+        
+        elif eth_header.eth_type == REALTEK_L2_P:
+            cur_client.protocols.add('REALTEK_LAYER_2')
+            cur_client.services.add('L2 Switch')
+            return
+        
         else:
             write_packet(p, "ethodebug.pcap")
 

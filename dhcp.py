@@ -152,11 +152,11 @@ def extract_dhcp_client_details(dhcp_packet: DHCPPacket, cur_client: Client, cli
         cur_client.vendor_class = is_utf8_decodable(vendor_class)
         cur_client.oses.add(cur_client.vendor_class)
 
-    client_id = get_dhcp_option(dhcp_packet, DHCP_CLIENTID_OPT)
+    """client_id = get_dhcp_option(dhcp_packet, DHCP_CLIENTID_OPT)
     client_id_decoded = is_utf8_decodable(client_id)
     if client_id_decoded and len(client_id_decoded) > 3:
         client_id_cleaned = clean_name(client_id_decoded)
-        cur_client.hostnames.add(client_id_cleaned)
+        cur_client.hostnames.add(client_id_cleaned)"""
 
     dhcp_server_id = get_dhcp_option(dhcp_packet, DHCP_SERVER_ID_OPT)
     if dhcp_server_id:
@@ -173,9 +173,12 @@ def extract_dhcp_client_details(dhcp_packet: DHCPPacket, cur_client: Client, cli
 
     domain_name_server = get_dhcp_option(dhcp_packet, DHCP_DNS_OPT)
     if domain_name_server:
-        domain_name_server_ip = socket.inet_ntoa(domain_name_server)
-        if domain_name_server_ip == cur_client.ip_address:
-            cur_client.notes.add('provides_network_dns')
+        try:
+            domain_name_server_ip = socket.inet_ntoa(domain_name_server)
+            if domain_name_server_ip == cur_client.ip_address:
+                cur_client.notes.add('provides_network_dns')
+        except OSError:
+            pass
 
     domain_name = get_dhcp_option(dhcp_packet, DHCP_DOM_NAME_OPT)
     if domain_name and is_utf8_decodable(domain_name):

@@ -24,10 +24,11 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 import yaml.scanner
 
-ETH_P = b'\x08\x00'
-ETH_IPV6 = b'\x86\xDD'
-ARP_P = b'\x08\x06'
-ETH_P_ALL = 0x0003
+ETH_P        = b'\x08\x00'
+ETH_IPV6     = b'\x86\xDD'
+ARP_P        = b'\x08\x06'
+REALTEK_L2_P = b'\x88\x99'
+ETH_P_ALL    = 0x0003
 
 # Standard 80211 pcap global header (24 bytes)
 PCAP_GLOBAL_HEADER_ETHERNET = b'\xd4\xc3\xb2\xa1\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\x00\x00\x01\x00\x00\x00'
@@ -35,6 +36,8 @@ MAGIC = 0xa1b2c3d4 # BE
 CIGAM = 0xd4c3b2a1 # LE
 
 GENERIC_UPNP_UA = 'Mozilla/5.0 (compatible; UPnP/1.1)'
+
+DHIP_HEADER = b'\x20\x00\x00\x00\x44\x48\x49\x50'
 
 QUEUE_SIZE = 1000
 
