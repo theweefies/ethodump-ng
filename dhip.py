@@ -48,19 +48,25 @@ def parse_dhip(payload: bytes, cur_client: Client):
     
     if 'mac' in decoded_data:
         try:
-            dict_data = json.loads(decoded_data)
+            dict_data: dict = json.loads(decoded_data)
         except json.decoder.JSONDecodeError:
             return
         try:
-            gateway = dict_data['params']['deviceInfo']['IPv4Address']['DefaultGateway']
-            ipv4 = dict_data['params']['deviceInfo']['IPv4Address']['IPAddress']
-            dev_type = dict_data['params']['deviceInfo']['DeviceType']
-            dev_class = dict_data['params']['deviceInfo']['DeviceClass']
-            mac = dict_data['mac']
-            serial = dict_data['params']['deviceInfo']['SerialNo']
-            httpport = str(dict_data['params']['deviceInfo']['HttpPort'])
-            fw_version = dict_data['params']['deviceInfo']['Version']
-            port = str(dict_data['params']['deviceInfo']['Port'])
+            params = dict_data.get('params', None)
+            mac = dict_data.get('mac', None)
+            if params:
+                device_info = params.get('deviceInfo', None)
+                if device_info:
+                    dev_type = device_info.get('DeviceType', None)
+                    dev_class = device_info.get('DeviceClass', None)
+                    ipv4_address = device_info.get('IPv4Address', None)
+                    serial = device_info.get('SerialNo', None)
+                    httpport = str(device_info.get('HttpPort', None))
+                    fw_version = device_info.get('Version', None)
+                    port = str(device_info.get('Port', None))
+                    if ipv4_address:
+                        gateway = ipv4_address.get('DefaultGateway', None)
+                        ipv4 = ipv4_address.get('IPAddress', None)
         except KeyError as e:
             return
         
@@ -91,8 +97,17 @@ def parse_dhip(payload: bytes, cur_client: Client):
             pass
         if dhip_dev:
             cur_client.protocols.add('DHIP')
-            cur_client.vendor_class = dhip_dev.get('Device Description')
-            cur_client.connections = dhip_dev.get('Device Class')
-            cur_client.oses.add(dhip_dev.get('Device Model'))
-            cur_client.oses.add(dhip_dev.get('Serial Number'))
-            cur_client.oses.add(dhip_dev.get('Firmware Version'))
+            cur_client.notes.add('ip_camera')
+            dev_desc = dhip_dev.get('Device Description')
+            dev_class = dhip_dev.get('Device Class')
+            dev_model = dhip_dev.get('Device Model')
+            dev_sn = dhip_dev.get('Serial Number')
+            dev_fw = dhip_dev.get('Firmware Version')
+            if dev_fw:
+                cur_client.oses.add('fw: ' + dev_fw)
+            if dev_sn:
+                cur_client.oses.add('sn: ' + dev_sn)
+            if dev_model:
+                cur_client.oses.add('mo: ' + dev_model)
+            cur_client.vendor_class = dev_desc
+            cur_client.connections = dev_class

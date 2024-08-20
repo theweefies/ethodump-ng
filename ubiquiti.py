@@ -79,13 +79,13 @@ def parse_ubiquiti(packet: bytes, cur_client: Client):
                 if not cur_client.ip_address and len(val) >= 10:
                     cur_client.ip_address = bytes_to_ip(val[6:10])
             elif tag_id == 3: # Firmware Version
-                cur_client.oses.add(val.decode('utf-8', 'ignore'))
+                cur_client.oses.add('fv: ' + val.decode('utf-8', 'ignore'))
             elif tag_id == 11: # Hostname
                 cur_client.hostnames.add(val.decode('utf-8', 'ignore'))
             elif tag_id == 12: # Short Model
-                cur_client.oses.add(val.decode('utf-8', 'ignore'))
+                cur_client.oses.add('mo: ' + val.decode('utf-8', 'ignore'))
             elif tag_id == 20: # Long Model
-                cur_client.oses.add(val.decode('utf-8', 'ignore'))
+                cur_client.oses.add('mo: ' + val.decode('utf-8', 'ignore'))
             else:
                 UNKNOWN_TAG = True
                 unknown_tags.append(tag_id)

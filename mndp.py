@@ -73,13 +73,13 @@ def process_mndp_packet(packet: MNDPPacket, cur_client: Client) -> None:
         elif t == TLV_5_IDENTITY:
             cur_client.hostnames.add(v.decode('utf-8', 'ignore'))
         elif t == TLV_7_VERSION:
-            cur_client.oses.add(v.decode('utf-8', 'ignore'))
+            cur_client.oses.add('vr: ' + v.decode('utf-8', 'ignore'))
         elif t == TLV_8_PLATFORM:
-            cur_client.oses.add(v.decode('utf-8', 'ignore'))
+            cur_client.oses.add('pl: ' + v.decode('utf-8', 'ignore'))
         elif t == TLV_11_SOFTWARE_ID:
-            cur_client.oses.add(v.decode('utf-8', 'ignore'))
+            cur_client.oses.add('sid: ' + v.decode('utf-8', 'ignore'))
         elif t == TLV_12_BOARD:
-            cur_client.oses.add(v.decode('utf-8', 'ignore'))
+            cur_client.oses.add('bn: ' + v.decode('utf-8', 'ignore'))
         elif t == TLV_17_IPV4_ADDRESS:
             if not cur_client.ip_address:
                 cur_client.ip_address = bytes_to_ip(v)

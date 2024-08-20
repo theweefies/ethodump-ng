@@ -70,15 +70,15 @@ def parse_ssdp_packet(payload: bytes, cur_client: Client, grab_resources: bool=F
                 if ua_parse_result:
                     device_type = ua_parse_result.get('device_type')
                     if device_type:
-                        cur_client.oses.add(device_type)
+                        cur_client.oses.add('dt: ' + device_type)
                 else:
                     os_regex = r"([A-Za-z]+\/[\d\.]+)"
                     matches = re.findall(os_regex, server)
                     match = matches[0] if matches else None
                     if match and match != UPNP_BASE_STRING:
-                        cur_client.oses.add(match)
+                        cur_client.oses.add('os: ' + match)
                     else:
-                        cur_client.oses.add(server)
+                        cur_client.oses.add('upnp: ' + server)
             if 'USER-AGENT' in line:
                 user_agent = line.split(': ')[1].strip()
                 cur_client.user_agents.add(user_agent)

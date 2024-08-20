@@ -184,14 +184,14 @@ def parse_http(payload: bytes | str, cur_client, resource_grab: bool=False) -> N
     if model:
         model_resolution = apple_models.get(model)
         if model_resolution:
-            cur_client.oses.add(model_resolution)
+            cur_client.oses.add('mo: ' + model_resolution)
 
     if service:
         cur_client.services.add(service)
     if osys:
-        cur_client.oses.add(osys)
+        cur_client.oses.add('os: ' + osys)
     if model:
-        cur_client.oses.add(model)
+        cur_client.oses.add('mo:' + model)
     if user_agent:
         cur_client.user_agents.add(user_agent)
     

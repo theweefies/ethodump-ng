@@ -75,7 +75,7 @@ def match_dhcp_fingerprint(packet: DHCPPacket, cur_client: Client) -> None:
         # Step 2: Compare with Fingerprint Dictionary
         for fingerprint_key, fingerprint_value in dhcp_fingerprints.items():
             if parameter_request_list == fingerprint_value[1]:
-                cur_client.oses.add(fingerprint_value[0])
+                cur_client.oses.add('fp: ' + fingerprint_value[0])
 
 def extract_dhcpv6_client_details(dhcpv6_packet: DHCPv6Packet, cur_client: Client) -> None:
     """
@@ -150,7 +150,7 @@ def extract_dhcp_client_details(dhcp_packet: DHCPPacket, cur_client: Client, cli
     vendor_class = get_dhcp_option(dhcp_packet, DHCP_VCLASS_OPT)
     if is_utf8_decodable(vendor_class) and not cur_client.vendor_class:
         cur_client.vendor_class = is_utf8_decodable(vendor_class)
-        cur_client.oses.add(cur_client.vendor_class)
+        cur_client.oses.add('vc: ' + cur_client.vendor_class)
 
     """client_id = get_dhcp_option(dhcp_packet, DHCP_CLIENTID_OPT)
     client_id_decoded = is_utf8_decodable(client_id)

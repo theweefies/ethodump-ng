@@ -642,7 +642,6 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
         elif eth_header.eth_type == REALTEK_L2_P:
             cur_client.protocols.add('REALTEK_LAYER_2')
             cur_client.services.add('L2 Switch')
-            return
         
         else:
             write_packet(p, "ethodebug.pcap")

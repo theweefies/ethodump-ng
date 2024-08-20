@@ -35,22 +35,26 @@ def parse_tp_link(packet: bytes, cur_client: Client):
 
             if 'mac' in decrypted_data:
                 try:
-                    dict_data = json.loads(decrypted_data)
+                    dict_data: dict = json.loads(decrypted_data)
                 except json.decoder.JSONDecodeError as e:
                     return
                 try:
-                    method = dict_data['method']
-                    group_id = dict_data['data']['group_id']
-                    mac = dict_data['data']['mac'].lower().replace('-',':')
-                    ip = dict_data['data']['ip']
-                    model = dict_data['data']['model']
-                    operation_mode = dict_data['data']['operation_mode']
-                    product_type = dict_data['data']['product_type']
-                    bridge_mode = str(dict_data['data']['bridge_mode'])
-                    wpa3_support = str(dict_data['data']['wpa3_support'])
-                    onemesh_support = str(dict_data['data']['onemesh_support'])
-                    onemesh_role = dict_data['data']['onemesh_role']
-                    onemesh_support_version = dict_data['data']['onemesh_support_version']
+                    method = dict_data.get('method', None)
+                    data = dict_data.get('data', None)
+                    if data:
+                        group_id = data.get('group_id', None)
+                        mac = data.get('mac', None)
+                        if mac:
+                            mac = mac.lower().replace('-',':')
+                        ip = data.get('ip', None)
+                        model = data.get('model', None)
+                        operation_mode = data.get('operation_mode', None)
+                        product_type = data.get('product_type', None)
+                        bridge_mode = str(data.get('bridge_mode', None))
+                        wpa3_support = str(data.get('wpa3_support', None))
+                        onemesh_support = str(data.get('onemesh_support', None))
+                        onemesh_role = data.get('onemesh_role', None)
+                        onemesh_support_version = data.get('onemesh_support_version', None)
                 except KeyError as e:
                     return
                 
@@ -70,7 +74,8 @@ def parse_tp_link(packet: bytes, cur_client: Client):
 
                 cur_client.protocols.add('TP-LINK P2P')
                 cur_client.services.add('TP-Link P2P')
-                cur_client.oses.add(tp_dev['Model'])
+                if tp_dev['Model']:
+                    cur_client.oses.add('mo: ' + tp_dev['Model'])
                 if tp_dev['Operation Mode'] == 'RT':
                     cur_client.notes.add("router_mode")
                 if tp_dev['WPA3 Support'] == True:

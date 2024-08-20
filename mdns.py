@@ -203,13 +203,17 @@ def parse_txt(record: MDNSTXT, cur_client: Client) -> None:
                 resolved_model = model_check(decoded_value.lower())
                 cur_client.model_check_complete = True
                 if resolved_model:
-                    cur_client.oses.add(resolved_model)
+                    cur_client.oses.add('mo:' + resolved_model)
                 else:
-                    cur_client.oses.add(decoded_value)
-            elif k != b"model":
-                cur_client.oses.add(decoded_value)
-        # print('Key: ', k.decode('utf-8','ignore'))
-        # print('Value: ', v.decode('utf-8','ignore'))
+                    cur_client.oses.add('mo: ' + decoded_value)
+            elif k == b"serialNumber":
+                cur_client.oses.add('sn: ' + decoded_value)
+            elif k == b'product':
+                cur_client.oses.add('pr: ' + decoded_value)
+            elif k == b'fv':
+                cur_client.oses.add('fv: ' + decoded_value)
+            elif k == b'manufacturer':
+                cur_client.oses.add('ma: ' + decoded_value)
 
 def process_mdns_packet(packet: MDNSPacket, cur_client: Client) -> None:
     """
