@@ -982,7 +982,7 @@ if __name__ == "__main__":
     # Thread to parse http/tcp payloads for json, xml, and other juicy tidbits
     http_thread = threading.Thread(target=handle_http, daemon=True).start()
 
-    if not args.read_pcap:
+    if args.redirect and not args.read_pcap:
         try:
             # Create a UDP socket
             query_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0x0800)
@@ -994,7 +994,7 @@ if __name__ == "__main__":
     try:
         while not flags.exit_flag:
             time.sleep(10)
-            if not args.read_pcap:
+            if args.redirect and not args.read_pcap:
                 create_igmp_membership_report(iface, query_socket)
                 send_mdns_query(iface, query_socket)
             pass
