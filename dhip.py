@@ -51,6 +51,16 @@ def parse_dhip(payload: bytes, cur_client: Client):
             dict_data: dict = json.loads(decoded_data)
         except json.decoder.JSONDecodeError:
             return
+
+        dev_type = None
+        dev_class = None
+        ipv4_address = None
+        serial = None
+        httpport = None
+        fw_version = None
+        port = None
+        gateway = None
+        ipv4 = None
         try:
             params = dict_data.get('params', None)
             mac = dict_data.get('mac', None)
@@ -81,7 +91,9 @@ def parse_dhip(payload: bytes, cur_client: Client):
                 'HTTP Port':httpport,
                 'Serial Number':serial,
                 'Firmware Version':fw_version,
-                'Port':port
+                'Port':port,
+                'Gateway Address':gateway,
+                'IPv4 Address':ipv4
             }
         except KeyError as e:
             dhip_dev = {
@@ -92,22 +104,35 @@ def parse_dhip(payload: bytes, cur_client: Client):
                 'HTTP Port':httpport,
                 'Serial Number':serial,
                 'Firmware Version':fw_version,
-                'Port':port
+                'Port':port,
+                'Gateway Address':gateway,
+                'IPv4 Address':ipv4
             }
             pass
         if dhip_dev:
             cur_client.protocols.add('DHIP')
-            cur_client.notes.add('ip_camera')
-            dev_desc = dhip_dev.get('Device Description')
-            dev_class = dhip_dev.get('Device Class')
-            dev_model = dhip_dev.get('Device Model')
-            dev_sn = dhip_dev.get('Serial Number')
-            dev_fw = dhip_dev.get('Firmware Version')
+            dev_desc = dhip_dev.get('Device Description', None)
+            dev_class = dhip_dev.get('Device Class', None)
+            dev_model = dhip_dev.get('Device Model', None)
+            dev_sn = dhip_dev.get('Serial Number', None)
+            dev_fw = dhip_dev.get('Firmware Version', None)
+            dev_ipv4 = dhip_dev.get('IPv4 Address', None)
             if dev_fw:
                 cur_client.oses.add('fw: ' + dev_fw)
             if dev_sn:
                 cur_client.oses.add('sn: ' + dev_sn)
             if dev_model:
                 cur_client.oses.add('mo: ' + dev_model)
+                if 'IPC' in dev_model:
+                    cur_client.services.add('Dahua IP Camera')
+                    cur_client.notes.add('ip_camera')
+                elif 'NVR' in dev_model:
+                    cur_client.services.add('Dahua NVR')
+                    cur_client.notes.add('network_video_recorder')
+                elif 'DVR' in dev_model:
+                    cur_client.services.add('Dahua DVR')
+                    cur_client.notes.add('digital_video_recorder')
             cur_client.vendor_class = dev_desc
             cur_client.connections = dev_class
+            if dev_ipv4:
+                cur_client.ip_address = dev_ipv4
