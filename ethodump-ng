@@ -907,6 +907,8 @@ if __name__ == "__main__":
     http_server_thread = None
     redirect_object = None
 
+    query_socket = None
+
     if not args.interface and not args.read_pcap:
         print('ERROR: either --interface or --read must be specified.')
         sys.exit()
@@ -1007,7 +1009,7 @@ if __name__ == "__main__":
         flags.exit_flag = True
         print("\nCTRL+C pressed, shutting down...")
     
-    if not args.read_pcap:
+    if not args.read_pcap and query_socket:
         query_socket.close()
 
     if write_thread:
