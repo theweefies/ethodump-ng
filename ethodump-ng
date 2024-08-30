@@ -28,6 +28,7 @@ from tp_link import parse_tp_link
 from ubiquiti import parse_ubiquiti
 from dhip import parse_dhip
 from hikvision import parse_hikvision
+from tuya_iot import parse_tuya
 from arp import parse_arp, process_arp
 from dhcp import *
 from dns_ import parse_dns_packet, process_dns_packet
@@ -486,6 +487,10 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     cur_client.protocols.add('NETBIOS-UDP-138')
                     return
 
+                elif udp_header.dst_port == 554:
+                    cur_client.protocols.add('RTSP-CTRL')
+                    return
+
                 elif udp_header.dst_port == 1900:
                     ssdp_packet = parse_ssdp_packet(payload, cur_client, GRAB_RESOURCES)
                     if not ssdp_packet:
@@ -514,6 +519,10 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                         process_mndp_packet(mndp_packet, cur_client)
                     cur_client.protocols.add('MNDP')
                     return
+                
+                elif udp_header.dst_port == 6667:
+                    if payload[:4] == b'\x00\x00\x55\xaa':
+                        parse_tuya(payload, cur_client)
                 
                 elif udp_header.src_port == 10001 or udp_header.dst_port == 10001:
                     parse_ubiquiti(payload, cur_client)
