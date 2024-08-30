@@ -27,6 +27,7 @@ import netifaces
 from tp_link import parse_tp_link
 from ubiquiti import parse_ubiquiti
 from dhip import parse_dhip
+from hikvision import parse_hikvision
 from arp import parse_arp, process_arp
 from dhcp import *
 from dns_ import parse_dns_packet, process_dns_packet
@@ -521,6 +522,9 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                 elif udp_header.src_port == 20002 or udp_header.dst_port == 20002:
                     parse_tp_link(payload, cur_client)
                     return
+                
+                elif udp_header.dst_port == 37020 or udp_header.src_port == 37020:
+                    parse_hikvision(payload, cur_client)
 
                 elif len(payload) >= 8:
                     if payload[:8] == DHIP_HEADER:
