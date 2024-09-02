@@ -29,6 +29,7 @@ from ubiquiti import parse_ubiquiti
 from dhip import parse_dhip
 from hikvision import parse_hikvision
 from tuya_iot import parse_tuya
+from ipp import parse_ipp
 from arp import parse_arp, process_arp
 from dhcp import *
 from dns_ import parse_dns_packet, process_dns_packet
@@ -551,7 +552,7 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
 
                 detect_service_banner(payload, cur_client)
 
-                if b'GET' in payload or b'HTTP' in payload:
+                if (b'GET' in payload or b'HTTP' in payload) and tcp_header.src_port != 631:
                     #parse_http(payload, cur_client, flags.lock, GRAB_RESOURCES)
                     http_queue.put((payload, cur_client))
                     write_packet(p, "ethodebug.pcap")
@@ -561,7 +562,14 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                 if tcp_header.src_port == 22:
                     cur_client.protocols.add('SSH')
                     return
-                
+
+                if tcp_header.src_port == 139:
+                    nbns_packet = parse_netbios_packet(payload, cur_client)
+                    if not nbns_packet:
+                        write_packet(p, "ethodebug.pcap")
+                    cur_client.protocols.add('NETBIOS-TCP-139')
+                    return
+
                 if tcp_header.dst_port == 443: # HTTPS
                     tls_packet = parse_tls_payload(payload)
                     if not tls_packet:
@@ -576,11 +584,9 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     cur_client.protocols.add('SMB')
                     return
 
-                if tcp_header.src_port == 139:
-                    nbns_packet = parse_netbios_packet(payload, cur_client)
-                    if not nbns_packet:
-                        write_packet(p, "ethodebug.pcap")
-                    cur_client.protocols.add('NETBIOS-TCP-139')
+                if tcp_header.src_port == 631:
+                    if payload:
+                        parse_ipp(payload, cur_client)
                     return
                 
             elif ip_header.protocol == 2: # IGMP
