@@ -21,6 +21,7 @@ import time
 import tty
 import random
 from io import BytesIO
+import zipfile
 
 import netifaces
 
@@ -360,17 +361,32 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
         else:
             time.sleep(.6)
 
-def load_oui() -> None:
+def load_oui(running_pyz:bool) -> None:
     """
     Function to load an oui dictionary from an oui
     file. 
     """
-    print('[+] Loading OUI tables')
     try:
-        f_oui = open(oui_file, 'r')
-        for line in f_oui:
+        lines = None
+        if running_pyz:
+            # Load from within the .pyz archive
+            print('[+] Loading OUI from archive')
+            data = pkgutil.get_data(__name__, oui_file)  # Load the file from the archive
+            if data is None:
+                raise FileNotFoundError(f"[!] {oui_file} not found in the .pyz archive")
+            lines = data.decode('utf-8').splitlines()
+        else:
+            # Load from the file system
+            print(f'[+] Loading OUI from file system: {oui_file}')
+            with open(oui_file, 'r') as f_oui:
+                lines = f_oui.readlines()
+
+        # Process the OUI file contents
+        for line in lines:
             items = line.split(',')
-            oui_table[items[1].lower()] = items[2]
+            if len(items) >= 3:  # Ensure the line has enough columns
+                oui_table[items[1].lower()] = items[2]
+
     except FileNotFoundError:
         print(f'[!] File Not Found: {oui_file}')
 
@@ -931,8 +947,13 @@ if __name__ == "__main__":
     if args.interface:
         interface_name = args.interface
 
-    load_tcp_fp_dbase()
-    load_oui()
+    running_pyz = False
+    # Check if we're running from within a .pyz archive
+    if zipfile.is_zipfile(sys.argv[0]):
+        running_pyz = True
+    
+    load_tcp_fp_dbase(running_pyz)
+    load_oui(running_pyz)
 
     if args.redirect:
         redirect_object = load_redirect_yaml(args.redirect)

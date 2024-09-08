@@ -12,6 +12,8 @@ from io import BytesIO
 import sys
 import json
 import time
+import zipfile
+import pkgutil
 
 os_sample_count = {}
 
@@ -148,17 +150,33 @@ class SPANNINGTreePacket:
 NOTE: TCP FINGERPRINT FUNCTIONS
 """
 
-def load_tcp_fp_dbase():
+def load_tcp_fp_dbase(running_pyz: bool):
     global tcp_fp_dbase_list
-    # load fingerprints into database
-    print('[+] Loading tcp fingerprint database...')
-    databaseFile = 'tcp_fp_db.json'
-    with open(databaseFile) as f:
-        tcp_fp_dbase_list = json.load(f)
-        for el in tcp_fp_dbase_list:
-            if el['os'] not in os_sample_count:
-                os_sample_count[el['os']] = 0
-            os_sample_count[el['os']] += 1
+
+    if running_pyz:
+        print('[+] Running from a .pyz archive, loading from archive...')
+        # Load the JSON directly from the archive
+        try:
+            data = pkgutil.get_data(__name__, 'tcp_fp_db.json')
+            tcp_fp_dbase_list = json.loads(data.decode('utf-8'))
+        except Exception as e:
+            print(f'[!] Failed to load tcp_fp_db.json from the archive: {e}')
+            sys.exit(1)
+    else:
+        # Fall back to loading from the filesystem
+        print('[+] Loading tcp fingerprint database from file system...')
+        databaseFile = 'tcp_fp_db.json'
+        try:
+            with open(databaseFile) as f:
+                tcp_fp_dbase_list = json.load(f)
+        except FileNotFoundError:
+            print(f'[!] Could not find {databaseFile} on the filesystem.')
+            sys.exit(1)    
+    
+    for el in tcp_fp_dbase_list:
+        if el['os'] not in os_sample_count:
+            os_sample_count[el['os']] = 0
+        os_sample_count[el['os']] += 1
 
 def parse_opts(buf):
     """Parse TCP option buffer into a list of (option, data) tuples."""
