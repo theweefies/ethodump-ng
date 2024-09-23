@@ -419,7 +419,8 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
             cur_client.count += 1
 
         if isinstance(eth_header, SPANNINGTreePacket):
-            cur_client.protocols.add('SPANNING TREE')
+            if not isinstance(cur_client, dict):
+                cur_client.protocols.add('SPANNING TREE')
             return
 
         if eth_header.eth_type == ARP_P:
