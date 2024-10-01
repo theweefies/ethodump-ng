@@ -46,6 +46,21 @@ def ubi_tlv(length: int, payload: bytes):
 
     return ubi_dev
 
+class TLV():
+
+    def __init__(self, tag, length, value):
+        self.tag = tag
+        self.length = length
+        self.value = value
+
+    @classmethod
+    def parse(cls, stream):
+        tag = stream[0]
+        length = int.from_bytes(stream[1:3], 'big')
+        value = stream[3:3+length]
+
+        return cls(tag, length, value)
+
 def parse_ubiquiti(packet: bytes, cur_client: Client):
     if not packet:
         return
@@ -53,46 +68,84 @@ def parse_ubiquiti(packet: bytes, cur_client: Client):
     if len(packet) < 4:
         return
     
-    # previously used a str comparison as well ('02060')
-    ubi_dev = None
+    unknown_tags = {}
 
-    if packet[:3] == b'\x01\x00\x00': # Ubiquiti Hello
-        if packet[3] != 0: # 4th byte is length of the payload (not including itself)
-            length = packet[3]
-            payload = packet[4:4+length]
-            if length != len(payload):
-                return
-            ubi_dev = ubi_tlv(length, payload)
+    device = {'addresses':[]}
 
-    if ubi_dev:
-        unknown_tags = []
-        UNKNOWN_TAG = False
+    # Skip first 4 bytes of packet
+    pos = 4
+    while pos != len(packet):
+        tlv = TLV.parse(packet[pos:])
+        pos += 3 + tlv.length
+
+        if tlv.tag == 1:
+            device['hwaddr'] = ':'.join(["{:02X}".format(x) for x in tlv.value])
+
+        elif tlv.tag == 2:
+            mac = ':'.join(["{:02X}".format(x) for x in tlv.value[:6]])
+            ipv4 = '.'.join([str(x) for x in tlv.value[6:]])
+            device['addresses'].append({"hwaddr":mac, "ipv4":ipv4})
+
+        elif tlv.tag == 3:
+            device['fwversion'] = tlv.value.decode()
+
+        elif tlv.tag == 10:
+            device['uptime'] = int.from_bytes(tlv.value, 'big')
+
+        elif tlv.tag == 11:
+            device['hostname'] = tlv.value.decode()
+
+        elif tlv.tag == 12:
+            device['board_shortname'] = tlv.value.decode()
+
+        elif tlv.tag == 13:
+            device['essid'] = tlv.value.decode()
+
+        elif tlv.tag == 14:
+            device['wmode'] = int.from_bytes(tlv.value, 'big')
+
+        elif tlv.tag == 19:
+            device['mac'] = ':'.join(["{:02X}".format(x) for x in tlv.value])
+
+        elif tlv.tag == 20:
+            device['product'] = tlv.value.decode()
+
+        elif tlv.tag == 21:
+            device['model'] = tlv.value.decode()
+
+        elif tlv.tag == 22:
+            device['software_version'] = tlv.value.decode()
+
+        elif tlv.tag == 27:
+            device['unknown_version'] = tlv.value.decode()
+        else:
+            unknown_tags[tlv.tag] = {"length":tlv.length, "value":tlv.value}
+
+    if device['addresses']:
         cur_client.services.add('Ubiquity P2P')
         cur_client.protocols.add('UBI-P2P')
-        for tag_id, val in ubi_dev.items():
-            if tag_id == 1: # MAC Address
-                if not cur_client.src_mac:
-                    cur_client.src_mac = bytes_to_mac(val)
-            elif tag_id == 2: # MAC Address & IP Address
-                if not cur_client.src_mac and len(val) > 6:
-                    cur_client.src_mac = bytes_to_mac(val[:6])
-                if not cur_client.ip_address and len(val) >= 10:
-                    cur_client.ip_address = bytes_to_ip(val[6:10])
-            elif tag_id == 3: # Firmware Version
-                cur_client.oses.add('fv: ' + val.decode('utf-8', 'ignore'))
-            elif tag_id == 11: # Hostname
-                cur_client.hostnames.add(val.decode('utf-8', 'ignore'))
-            elif tag_id == 12: # Short Model
-                cur_client.oses.add('mo: ' + val.decode('utf-8', 'ignore'))
-            elif tag_id == 20: # Long Model
-                cur_client.oses.add('mo: ' + val.decode('utf-8', 'ignore'))
-            else:
-                UNKNOWN_TAG = True
-                unknown_tags.append(tag_id)
 
-        if UNKNOWN_TAG:
-            with open(f'{cur_client.src_mac.replace(":","")}-ubiquity-unknown-tags.txt', 'a') as f_ubi:
-                for tag in unknown_tags:
-                    f_ubi.write(f"Tag ID: {tag}\n")
-                    f_ubi.write(f"Decoded Value: {ubi_dev[tag].decode('utf-8','ignore')}\n")
-                    f_ubi.write(f"Hex Value: {binascii.hexlify(ubi_dev[tag])}\n\n")
+        if not cur_client.src_mac and 'hwaddr' in device:
+            cur_client.src_mac = device['hwaddr']
+        if not cur_client.ip_address:
+            if 'ipv4' in device['addresses']:
+                cur_client.ip_address = device['addresses']['ipv4']
+        if 'fwversion' in device:
+            cur_client.oses.add('fv: ' + device['fwversion'])
+        if 'software_version' in device:
+            cur_client.oses.add('sv: ' + device['software_version'])
+        if 'hostname' in device:
+            cur_client.hostnames.add(device['hostname'])
+        if 'board_shortname' in device:
+            cur_client.oses.add('mo: ' + device['board_shortname'])
+        if 'product' in device:
+            cur_client.oses.add('mo: ' + device['product'])
+        if 'model' in device:
+            cur_client.oses.add('mo: ' + device['model'])
+        if 'essid' in device:
+            cur_client.notes.add(f'essid: {device["essid"]}')
+        if 'wmode' in device:
+            cur_client.notes.add(f'wmode: {device["wmode"]}')
+
+        with open(f'{cur_client.src_mac.replace(":","")}-ubiquity-device.txt', 'w') as f_ubi:
+            f_ubi.write(device.__str__())
