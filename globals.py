@@ -28,6 +28,10 @@ ETH_P        = b'\x08\x00'
 ETH_IPV6     = b'\x86\xDD'
 ARP_P        = b'\x08\x06'
 REALTEK_L2_P = b'\x88\x99'
+
+ETH_HEADER_LEN = 14
+LLC_HEADER_LEN = 8
+
 ETH_P_ALL    = 0x0003
 
 # Standard 80211 pcap global header (24 bytes)
@@ -41,11 +45,12 @@ DHIP_HEADER = b'\x20\x00\x00\x00\x44\x48\x49\x50'
 
 QUEUE_SIZE = 1000
 
-IPV4_ANY_ADDRESS = '0.0.0.0'
-IPV6_ANY_ADDRESS = '::'
+IPV4_ANY_ADDRESS  = '0.0.0.0'
+IPV6_ANY_ADDRESS  = '::'
 ETH_BCAST_ADDRESS = 'ff:ff:ff:ff:ff:ff'
-ETH_ANY_ADDRESS = '00:00:00:00:00:00'
+ETH_ANY_ADDRESS   = '00:00:00:00:00:00'
 SPAN_TREE_ADDRESS = '01:80:c2:00:00:00'
+CDP_MAC_ADDRESS   = '01:00:0c:cc:cc:cc'
 
 clients = {}
 oui_table = {}
