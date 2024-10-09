@@ -454,24 +454,27 @@ class Client:
         # Join all the attribute strings with newlines for pretty printing
         return "\n".join(attributes)
 
-    def to_dict(self) -> dict:
+    def to_dict(self, show_ipv6) -> dict:
         """
         Converts the class to a dictionary
         """
-        return {
-            '#': self.client_count,
-            'SOURCE': self.src_mac,
-            'IPv4': self.ip_address,
-            'IPv6': self.ipv6_address,
-            'MANUFACTURER': self.manufacturer,
-            'HOSTNAME': self.hostnames,
-            'SERVICES': self.services,
-            'TTL': self.ttl,
-            'MAKE/MODEL/OS': self.oses,
-            #'CONNECTIONS': self.connections,
-            'PORTS': self.ports,
-            'COUNTS': self.count
-        }
+        
+        dict_data = {}
+
+        dict_data['#']      = self.client_count
+        dict_data['SOURCE'] = self.src_mac
+        dict_data['IPv4']   = self.ip_address
+        if show_ipv6:
+            dict_data['IPv6'] = self.ipv6_address
+        dict_data['MANUFACTURER'] = self.manufacturer
+        dict_data['HOSTNAME']     = self.hostnames
+        dict_data['SERVICES']     = self.services
+        dict_data['TTL']          = self.ttl
+        dict_data['MAKE/MODEL/OS']= self.oses
+        dict_data['PORTS']        = self.ports
+        dict_data['COUNTS']       = self.count 
+    
+        return dict_data
 
 def add_port(dst_port: int, cur_client: Client) -> None:
     """

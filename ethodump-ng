@@ -111,6 +111,7 @@ class StatusInfo:
         self.message_printed = False
         self.pcap_read = ""
         self.lower_status = ""
+        self.show_ipv6 = False
 
 def get_terminal_size():
     try:
@@ -224,11 +225,21 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
     Function to print out details of the client class instances to the
     Real-Time Display. Target of thread.
     """
+
+    show_ipv6 = status_info.show_ipv6
+
     # Define maximum widths for each column
-    max_widths = {
-        '#': 3, 'SOURCE': 19, 'IPv4': 14, 'IPv6': 30, 'MANUFACTURER': 20,
-        'HOSTNAME': 20, 'SERVICES': 20, 'TTL': 4, 'MAKE/MODEL/OS': 15, 'PORTS': 6, 'COUNTS': 6
+    if show_ipv6:
+        max_widths = {
+            '#': 3, 'SOURCE': 19, 'IPv4': 14, 'IPv6': 39, 'MANUFACTURER': 20,
+            'HOSTNAME': 20, 'SERVICES': 20, 'TTL': 4, 'MAKE/MODEL/OS': 15, 'PORTS': 6, 'COUNTS': 6
+        }
+    else:
+        max_widths = {
+        '#': 3, 'SOURCE': 19, 'IPv4': 14, 'MANUFACTURER': 20,
+        'HOSTNAME': 20, 'SERVICES': 20, 'TTL': 4, 'MAKE/MODEL/OS': 30, 'PORTS': 6, 'COUNTS': 6
     }
+    
 
     # Define the header and row formats using the maximum widths
     header_format = " ".join([f"{{:<{max_widths[col]}}}" for col in max_widths])
@@ -271,7 +282,7 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
             for client_mac, client_data in clients_dict.items():
                 if isinstance(client_data, dict):
                     for client_ip, ext_client in client_data.items():
-                        client_dict = ext_client.to_dict()  # Convert the client object to a dictionary
+                        client_dict = ext_client.to_dict(show_ipv6)  # Convert the client object to a dictionary
                 
                         # Prepare each value, truncate if necessary, convert None to '', and ensure alignment
                         truncated_dict = {}
@@ -312,7 +323,7 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
                         elif ext_client.color:
                             display_body += DEFAULT
                 else:
-                    client_dict = client_data.to_dict()  # Convert the client object to a dictionary
+                    client_dict = client_data.to_dict(show_ipv6)  # Convert the client object to a dictionary
                     
                     # Prepare each value, truncate if necessary, convert None to '', and ensure alignment
                     truncated_dict = {}
@@ -921,6 +932,7 @@ if __name__ == "__main__":
     ed_argparse.add_argument('-r', '--resource-grab', action='store_true', help='Enable resource grabbing (Performs GET against resource urns).', required=False, default=False)
     ed_argparse.add_argument('-p', '--read-pcap', action='store', type=str, help='Pass a pcap file to read', required=False)
     ed_argparse.add_argument('-m', '--redirect', action='store', type=str, help='Enter the filename/path for redirection configuration.', required=False, default=None)
+    ed_argparse.add_argument('-6', '--show-ipv6', action='store_true', help='Display IPv6 Addressing column in real-time display', required=False, default=False)
     ed_argparse.add_argument('-d', '--debug', action='store_true', help='Set the script debug to verbose.', required=False, default=False)
     ed_argparse.add_argument('-v', '--version', action='version')
 
@@ -971,6 +983,8 @@ if __name__ == "__main__":
     iface = Interface(interface_name)
     # Initialize global display status info and input control class
     status_info = StatusInfo(interface_name)
+    # set cli display args
+    status_info.show_ipv6 = args.show_ipv6
     # Initialize global flags class for signal management
     flags = Flags()
     # Initialize the queue(s)
