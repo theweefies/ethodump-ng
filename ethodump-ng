@@ -249,7 +249,7 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
     while not flags.exit_flag:
 
         if not flags.paused:
-
+            sys.stdout.write(CLEAR_SCREEN_CURSOR_TO_TOP)
             # Get the terminal size
             rows, columns = get_terminal_size()
 
@@ -367,9 +367,16 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
             display_body += " " * len(header) + "\n"
             display_body += status_info.lower_status + "\n"
             display_body += "\n\n"
-            sys.stdout.write(display_body)
+
+            # truncate based on available columns
+            # Truncate each line to fit within the available columns
+            # Truncate both rows and columns in one go
+            truncated_display_body = '\n'.join([line[:columns] for line in display_body.splitlines()[:rows]])
+
+            sys.stdout.write(truncated_display_body)
             sys.stdout.flush()
             time.sleep(.6)  # Update every half second
+            
         else:
             time.sleep(.6)
 
