@@ -322,52 +322,6 @@ chromecast_device_desc_xml = """"
 </root>
 """
 
-def create_igmp_membership_report(own_iface, skt: socket.socket):
-    if not own_iface.mac or not own_iface.ip:
-        return
-    src_mac = mac_address_to_bytes(own_iface.mac)
-    src_ip = socket.inet_aton(own_iface.ip)
-    multicast_ip = socket.inet_aton(MULTICAST_IP)
-    dst_mac = mac_address_to_bytes(MULTICAST_MAC)
-
-    igmp_type = 0x16
-    igmp_max_resp_time = 0
-    igmp_checksum = 0
-    
-    igmp_payload = struct.pack('!BBH4s', igmp_type, igmp_max_resp_time, igmp_checksum, multicast_ip)
-    igmp_len = len(igmp_payload)
-    # Calculate igmp checksum
-    igmp_payload = calculate_igmp_checksum(igmp_payload)
-
-    eth_header = struct.pack("!6s6sH", dst_mac, src_mac, 0x0800)
-
-    # ip header
-    ver_header_len = 70 # version 4 + header length 24 (6)
-    dsf = 192 # DSF
-    identification = 0
-    ip_header_len = 24
-    ttl = 1
-    ip_proto_igmp = 2
-    flags_fragment_offset = 0x4000
-    checksum = 0
-
-    # ip header packing
-    header_without_checksum = struct.pack('!BBHHHBBH4s4s', ver_header_len, dsf, ip_header_len + igmp_len, identification, flags_fragment_offset, ttl, ip_proto_igmp, checksum, src_ip, multicast_ip)
-
-    # add router alert option to ip header
-    header_without_checksum += b'\x94\x04\x00\x00'
-
-    calculated_checksum = ip_checksum(header_without_checksum)
-
-    ip_header = struct.pack("!BBHHHBBH4s4s", ver_header_len, dsf, ip_header_len + igmp_len, identification, flags_fragment_offset, ttl, ip_proto_igmp, calculated_checksum, src_ip, multicast_ip)
-
-    # re-add the router alert option
-    ip_header += b'\x94\x04\x00\x00'
-
-    pkt = eth_header + ip_header + igmp_payload
-
-    skt.send(pkt)
-
 def encode_mdns_name(name):
     """Encode a domain name according to mDNS requirements."""
     parts = name.split('.')
