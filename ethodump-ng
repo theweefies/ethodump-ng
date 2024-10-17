@@ -945,6 +945,8 @@ if __name__ == "__main__":
 
     args = ed_argparse.parse_args()
 
+    #args.redirect = None
+
     iface = None
     interface_name = ""
     # Set queues to None
