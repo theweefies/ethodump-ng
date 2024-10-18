@@ -881,23 +881,94 @@ def handle_http() -> None:
         except queue.Empty:
             continue
 
+def display_help():
+    print("""
+ethodump-ng - An Ethernet packet sniffing tool that performs live parsing.
+
+usage: ethodump-ng [-i INTERFACE] or [-p READ_PCAP], [-w WRITE] [-s SAVE] [-r] [-6] [-h] [-v]
+          
+Description: 
+            Ethodump provides and airodump-ng-like real-time display for ethernet traffic. 
+            It can capture live, or read from a file. It will record packets in a file, 
+            and also performs live parsing and some basic parsing and advanced fingerprinting.
+
+required options for capturing:
+    -i/--interface <interface>      Enter the interface on which you want to sniff.
+          
+required options for replaying:
+    -p/--read-pcap <filename>       Pass a pcap file to read
+          
+options:     
+    -w/--write <filename>           Pass the file name to write packets.     
+    -s/--save <filename>            Pass the file name to save detailed analytic results.
+          
+active options: 
+    -r/--resource-grab              Enable resource grabbing (Performs GET against resource urns).
+    -m/--redirect                   Enable mDNS/SSDP responses and redirection. 
+
+display mod options:   
+    -6, --show-ipv6                 Display IPv6 Addressing column in real-time display
+
+information:    
+    -h, --help                      show this help message and exit
+    -v, --version                   show program's version number and exit
+          
+Fingerprinting protocols: DHCP, TCP/TLS-JA3, mDNS, SSDP
+          
+Resource grabbing: 
+            Ethodump-ng can actively resource grab URNs from SSDP packets. This
+            feature will send a GET request to the host to download the file at
+            the received URN (e.g., http:192.168.1.1:8000/device_desc.xml)
+          
+Redirection:
+            A yaml configuration file must be passed with this option:
+-----------------------------
+# ethodump-ng redirect yaml
+---
+  Redirect-Port: 8008
+  #Redirect-Port-HTTPS: 443
+  Redirect-IP: 172.20.10.2
+  Target-IP: 172.20.10.1
+  Hostname: testtest
+  Redirect-Path: /zc
+  #HTTPS-Cert: ssl_webdav.pem
+  #HTTPS-Key: ssl_webdav.pem
+...
+-----------------------------
+            If HTTPS options are specified, an HTTPS server will be stood up.
+            Otherwise, the default is to stand up an HTTP server. mDNS and SSDP
+            service queries or searches will be met with a response, and if
+            vulnerable services are detected (Spotify, YouTube, Airplay),
+            ethodump-ng will attempt to elicit the target device
+            into an mDNS/SSDP to HTTP/S interaction, which in some cases
+            will provide user agents, device and OS model/version, 
+            and in some cases user account information for the services. For
+            the redirect path, this is the path that a device will attempt to
+            send a GET request to in the initial HTTP interaction. Spotify is
+            known to use /zc, YouTube /ws/app.
+
+""")
+    sys.exit(0)
+
 if __name__ == "__main__":
 
-    ed_argparse = argparse.ArgumentParser(prog='ethodump-ng', description='An Ethernet packet sniffing tool.')
+    ed_argparse = argparse.ArgumentParser(prog='ethodump-ng', description='An Ethernet packet sniffing tool.', add_help=False)
     ed_argparse.version = '1.0'
-    ed_argparse.add_argument('-i', '--interface', action='store', type=str, help='Enter the interface on which you want to sniff.', required=False)
-    ed_argparse.add_argument('-w', '--write', action='store', type=str, help='Pass the file name to write packets.', required=False)
-    ed_argparse.add_argument('-s', '--save', action='store', type=str, help='Pass the file name to save detailed results.', required=False)
-    ed_argparse.add_argument('-r', '--resource-grab', action='store_true', help='Enable resource grabbing (Performs GET against resource urns).', required=False, default=False)
-    ed_argparse.add_argument('-p', '--read-pcap', action='store', type=str, help='Pass a pcap file to read', required=False)
-    ed_argparse.add_argument('-m', '--redirect', action='store', type=str, help='Enter the filename/path for redirection configuration.', required=False, default=None)
-    ed_argparse.add_argument('-6', '--show-ipv6', action='store_true', help='Display IPv6 Addressing column in real-time display', required=False, default=False)
-    ed_argparse.add_argument('-d', '--debug', action='store_true', help='Set the script debug to verbose.', required=False, default=False)
-    ed_argparse.add_argument('-v', '--version', action='version')
+    ed_argparse.add_argument('-i', '--interface',     action='store',      type=str, help='Enter the interface on which you want to sniff.',                required=False)
+    ed_argparse.add_argument('-w', '--write',         action='store',      type=str, help='Pass the file name to write packets.',                           required=False)
+    ed_argparse.add_argument('-s', '--save',          action='store',      type=str, help='Pass the file name to save detailed results.',                   required=False)
+    ed_argparse.add_argument('-r', '--resource-grab', action='store_true',           help='Enable resource grabbing (Performs GET against resource urns).', required=False, default=False)
+    ed_argparse.add_argument('-p', '--read-pcap',     action='store',      type=str, help='Pass a pcap file to read',                                       required=False, default=None)
+    ed_argparse.add_argument('-m', '--redirect',      action='store',      type=str, help='Enter the filename/path for redirection configuration.',         required=False, default=None)
+    ed_argparse.add_argument('-6', '--show-ipv6',     action='store_true',           help='Display IPv6 Addressing column in real-time display',            required=False, default=False)
+    ed_argparse.add_argument('-d', '--debug',         action='store_true',           help='Set the script debug to verbose.',                               required=False, default=False)
+    ed_argparse.add_argument('-h', '--help',          action='store_true',                                                                                                  default=False)
+    ed_argparse.add_argument('-v', '--version',       action='version')
 
     args = ed_argparse.parse_args()
 
-    #args.redirect = None
+    if args.help:
+        display_help()
 
     iface = None
     interface_name = ""

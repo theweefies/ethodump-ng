@@ -219,7 +219,7 @@ def parse_http(payload: bytes | str, cur_client, resource_grab: bool=False) -> N
             xml_fh.write(xml_object.encode())
     
 class HTTPRequestHandler(BaseHTTPRequestHandler):
-    server_version = "SHP, UPnP/1.0, Sony UPnP SDK/1.0"
+    server_version = "Generic, UPnP/1.0, UPnP SDK/1.0"
     user_agent = "DLNADOC/1.50 SEC_HHP_"
 
     def __init__(self, *args, red_obj, **kwargs):
@@ -246,9 +246,18 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Access denied")
             return    
         # Log request details
-        print(f"\nReceived GET request from {self.client_address}")
-        print(f"Path: {self.path}")
-        print(f"Headers:\n{self.headers}")
+        # Generate a timestamp for the filename
+        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    
+        # Construct the filename based on the client address and timestamp
+        filename = f"{self.client_address[0]}_http_get_{timestamp}.txt"
+    
+        # Write the request details to the file
+        with open(filename, "w") as log_file:
+            log_file.write(f"Received GET request from {self.client_address}\n")
+            log_file.write(f"Path: {self.path}\n")
+            log_file.write(f"Headers:\n{self.headers}\n")
+
         for type_,val in self.headers.items():
             headers[type_] = val
         if self.redirect_path in self.path:
@@ -288,9 +297,18 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Access denied")
             return
         # Log request details
-        print(f"\nReceived POST request from {self.client_address}")
-        print(f"Path: {self.path}")
-        print(f"Headers:\n{self.headers}")
+        # Generate a timestamp for the filename
+        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    
+        # Construct the filename based on the client address and timestamp
+        filename = f"{self.client_address[0]}_http_post_{timestamp}.txt"
+    
+        # Write the request details to the file
+        with open(filename, "w") as log_file:
+            log_file.write(f"Received POST request from {self.client_address}\n")
+            log_file.write(f"Path: {self.path}\n")
+            log_file.write(f"Headers:\n{self.headers}\n")
+
         for type_,val in self.headers.items():
             headers[type_] = val
         # Get the length of the data
@@ -298,7 +316,9 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         post_data = self.rfile.read(content_length)
         # handle the payload
         payload = post_data.decode('utf-8')
-        print(f"Payload:\n{payload}")
+        if payload:
+            with open(filename, "a") as log_file:
+                log_file.write(f"\nPayload:\n{payload}")
         decoded_dict = x_www_decode(payload)
         user_agent = headers.get('User-Agent')
         
