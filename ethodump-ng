@@ -23,81 +23,33 @@ import random
 from io import BytesIO
 import zipfile
 
-import netifaces
+from _netifaces import Interface
 
-from tp_link import parse_tp_link
-from ubiquiti import parse_ubiquiti
-from dhip import parse_dhip
-from hikvision import parse_hikvision
-from tuya_iot import parse_tuya
-from ipp import parse_ipp
-from arp import parse_arp, process_arp
-from dhcp import *
-from dns_ import parse_dns_packet, process_dns_packet
 from globals import *
+from arp import parse_arp, process_arp
+from cdp import parse_cdp_response
+from dhcp import *
+from dhip import parse_dhip
+from dns_ import parse_dns_packet, process_dns_packet
+from hikvision import parse_hikvision
 from http_ import detect_service_banner, parse_http, start_server, start_https_server
 from icmp import parse_icmp, parse_icmpv6, process_icmpv6_packet
 from igmp import parse_igmp
+from ipp import parse_ipp
 from mdns import parse_mdns_packet, prepare_redirect, process_mdns_packet
 from mndp import parse_mndp_packet, process_mndp_packet
 from netbios import parse_netbios_datagram, parse_netbios_packet
+
+from responses import send_mdns_query
 from ssdp import parse_ssdp_packet
 from tcp_udp import *
 from tls import find_ja3_classification, parse_tls_payload
-from responses import send_mdns_query
-from cdp import parse_cdp_response
+from tp_link import parse_tp_link
+from tuya_iot import parse_tuya
+from ubiquiti import parse_ubiquiti
 
 GRAB_RESOURCES = False
 TARGET_IP = None
-
-class Interface:
-    """
-    Class to store and initialize system interface attributes.
-    """
-    interface_name = None
-    mac = None
-    ip = None
-    ipv6 = None
-    gateway = None
-
-    def __init__(self, name: str):
-        self.interface_name = name
-        if not self.interface_name: # This for read file mode
-            self.mac = ""
-            self.ip = ""
-            self.gateway = ""
-            return
-        self.get_own_addresses()
-        try:
-            gateways = netifaces.gateways()
-            self.gateway = gateways['default'][netifaces.AF_INET][0]
-            self.gateway_mac = gateways['default']
-        except KeyError:
-            pass
-
-    def get_own_addresses(self):
-        """
-        Method to retrieve layer 2 and 3 addressing from specified interface.
-        """
-        try:
-            if netifaces.AF_LINK in netifaces.ifaddresses(self.interface_name):
-                self.mac = netifaces.ifaddresses(self.interface_name)[netifaces.AF_LINK][0]['addr']
-            if netifaces.AF_INET in netifaces.ifaddresses(self.interface_name):
-                self.ip = netifaces.ifaddresses(self.interface_name)[netifaces.AF_INET][0]['addr']
-            if netifaces.AF_INET6 in netifaces.ifaddresses(self.interface_name):
-                ipv6_info = netifaces.ifaddresses(self.interface_name)[netifaces.AF_INET6]
-                self.ipv6 = None
-                for addr_info in ipv6_info:
-                    ipv6_addr = addr_info.get('addr')
-                    if ipv6_addr:
-                        if '%' in ipv6_addr:
-                            self.ipv6 = ipv6_addr.split('%')[0]
-                        else:
-                            self.ipv6 = ipv6_addr
-                        break
-        except Exception:
-            print('[!] ERROR: Please check the interface name and try again.')
-            sys.exit(0)
 
 class StatusInfo:
     """
@@ -990,6 +942,14 @@ if __name__ == "__main__":
 
     # Initialize global interface object class
     iface = Interface(interface_name)
+    iface.get_own_addresses()
+    if not args.read_pcap and args.redirect:
+        ipv4s, ipv6s = detect_addresses(iface)
+        iface.ip, iface.ipv6 = ethodump_select_addresses(ipv4s, ipv6s)
+        if not iface.ip:
+            print(f"[-] Error: {iface.interface_name} does not seem to have addressing set up.")
+            exit()
+    
     # Initialize global display status info and input control class
     status_info = StatusInfo(interface_name)
     # set cli display args

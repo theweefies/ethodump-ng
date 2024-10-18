@@ -572,3 +572,87 @@ def grab_resource(urn: str, user_agent: str, parsed_urn: ParseResult):
     
     except URLError:
         pass
+
+def display_menu(options):
+    """
+    Displays a simple menu with options for the user to choose from.
+    """
+    
+    for index, option in enumerate(options, start=1):
+        print(f"{index}. {option}")
+    print(f"0. Exit\n")
+
+def get_user_selection(options):
+    """
+    Prompts the user to select an option from the menu.
+    """
+    while True:
+        display_menu(options)
+        try:
+            choice = int(input("Select an option: "))
+            if choice == 0:
+                return None  # Exit option
+            if 1 <= choice <= len(options):
+                return options[choice - 1]
+            else:
+                print("[!] Invalid selection. Please try again.")
+        except ValueError:
+            print("[!] Please enter a valid number.")
+
+def ethodump_select_addresses(available_ipv4, available_ipv6):
+    """
+    Prompts the user to select which IPv4 and IPv6 addresses to use.
+    """
+    if not available_ipv4:
+        return None, None
+
+    print("[?] IP Address Selection")
+    print("    - Multiple Addresses have been detected. For active responses,")
+    print("    - mDNS query responses, and mDNS redirection, you must choose")
+    print("    - one address for IPv4. IPv6 is optional.\n")
+    
+    # Select IPv4 Address
+    selected_ipv4 = None
+    if available_ipv4:
+        if len(available_ipv4) == 1:
+            selected_ipv4 = available_ipv4[0]
+        else:
+            selected_ipv4 = get_user_selection(available_ipv4)
+            if selected_ipv4:
+                print(f"[+] Selected IPv4 Address: {selected_ipv4}")
+                input("    Press enter to continue...")
+            else:
+                print('[!] You must choose an address or remove the redirect option.')
+                exit()
+
+    sys.stdout.write(CLEAR_SCREEN_CURSOR_TO_TOP)
+    
+    # Select IPv6 Address
+    selected_ipv6 = None
+    if available_ipv6:
+        print("[?] IPv6 Address Selection:\n")
+        if len(available_ipv6) == 1:
+            selected_ipv6 = available_ipv6[0]
+        else:
+            selected_ipv6 = get_user_selection(available_ipv6)
+            if selected_ipv6:
+                print(f"[+] Selected IPv6 Address: {selected_ipv6}")
+                input("    Press enter to continue...")
+    
+    return selected_ipv4, selected_ipv6
+
+def detect_addresses(iface):
+    """Function to determine if multiple addresses are available."""
+    if not iface:
+        return
+    
+    available_ipv4 = []
+    available_ipv6 = []
+
+    for ip in iface.inet_v4.keys():
+        available_ipv4.append(ip)
+    
+    for ipv6 in iface.inet_v6.keys():
+        available_ipv6.append(ipv6)
+
+    return available_ipv4, available_ipv6
