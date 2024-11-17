@@ -788,6 +788,8 @@ def write_packet(p: bytes, filename: str | None) -> None:
     """
     Function to write packets to a pcap file.
     """
+    global endian
+
     # Get the current time
     current_time = time.time()
 
@@ -796,18 +798,22 @@ def write_packet(p: bytes, filename: str | None) -> None:
     ts_microseconds = int((current_time - ts_seconds) * 1_000_000)
 
     packet_length = len(p)
-    packet_header = struct.pack('IIII', ts_seconds, ts_microseconds, packet_length, packet_length)
+    packet_header = struct.pack(endian + 'IIII', ts_seconds, ts_microseconds, packet_length, packet_length)
     f_out = open(filename, 'ab')
     f_out.write(packet_header)
     f_out.write(p)
     f_out.close()
 
 def write_header(filename: str) -> None:
+    global endian
     """
     Function to write the global pcap file header.
     """
     f_out = open(filename, "wb")
-    f_out.write(PCAP_GLOBAL_HEADER_ETHERNET)
+    if endian == '<':
+        f_out.write(PCAP_GLOBAL_HEADER_ETHERNET)
+    else:
+        f_out.write(PCAP_GLOBAL_HEADER_ETHERNET_BE)
     f_out.close()
 
 def ssdp_responder(own_iface: Interface, red_object: RedirectObject) -> None:
@@ -969,6 +975,11 @@ if __name__ == "__main__":
 
     if args.help:
         display_help()
+
+    system_detection_status = determine_system_version()
+    if not system_detection_status:
+        print('[!] Error: System compatibility issue. Exiting...')
+        sys.exit(0)
 
     iface = None
     interface_name = ""

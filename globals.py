@@ -35,7 +35,9 @@ LLC_HEADER_LEN = 8
 ETH_P_ALL    = 0x0003
 
 # Standard 80211 pcap global header (24 bytes)
-PCAP_GLOBAL_HEADER_ETHERNET = b'\xd4\xc3\xb2\xa1\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\x00\x00\x01\x00\x00\x00'
+PCAP_GLOBAL_HEADER_ETHERNET    = b'\xd4\xc3\xb2\xa1\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\x00\x00\x01\x00\x00\x00'
+PCAP_GLOBAL_HEADER_ETHERNET_BE = b'\xa1\xb2\xc3\xd4\x00\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\x00\x00\x00\x01'
+
 MAGIC = 0xa1b2c3d4 # BE
 CIGAM = 0xd4c3b2a1 # LE
 
@@ -62,6 +64,8 @@ http_queue = queue.Queue(1000)
 mdns_queue = queue.Queue(100)
 ssdp_queue = queue.Queue(100)
 
+endian = '<'
+
 HOSTNAME = subprocess.getoutput('hostname')
 
 DARK_RED = '\x1b[31m'
@@ -69,8 +73,31 @@ DEFAULT = '\x1b[0m'
 CURSOR_TO_TOP = '\x1b[H'
 CLEAR_SCREEN_CURSOR_TO_TOP = '\x1b[2J\x1b[H'
 
+UBUNTU_SYSTEM_LIST = ['jammy','focal','kinetic']
+PI_SYSTEM_LIST = ['bullseye','buster','bookworm']
+
 # Mapping keys to clients for display expansion
 key_mapping = {'w': 10, 'e': 11, 'r': 12, 't': 13, 'y': 14, 'u': 15, 'i': 16, 'o': 17, 'p': 18, 'a': 19, 's':20}
+
+def determine_system_version() -> bool:
+    global endian
+
+    etc_release = subprocess.getoutput('cat /etc/os-release').split('\n')
+    for line in etc_release:
+        if 'VERSION_CODENAME' in line:
+            version = line.split('=')[1].lower()
+            if not (version and (version in UBUNTU_SYSTEM_LIST or version in PI_SYSTEM_LIST)):
+                return False
+            else:
+                return True
+        elif 'OPENWRT_ARCH' in line:
+            architecture = line.split('=')[1].lower()
+            if architecture and 'mips' in architecture:
+                print('[-] MIPS Architecture detected...')
+                endian = '>'
+                return True
+            
+    return False
 
 def generate_random_mac():
     # Generate a random MAC address
