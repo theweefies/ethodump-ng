@@ -335,6 +335,12 @@ def tcp_ip_fingerprint(pkt, ip_header: IPHeader, tcp_header: TCPHeader, cur_clie
 
     if syn and not ack:
 
+        mss                  = 0
+        str_opts             = ''
+        timestamp            = 0
+        timestamp_echo_reply = 0
+        window_scaling       = ''
+
         if tcp_header.options:
             tcp_options = parse_opts(tcp_header.options)
 
