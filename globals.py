@@ -99,6 +99,46 @@ def determine_system_version() -> bool:
             
     return False
 
+def ensure_allmulti(interface, flags):
+    """
+    Check if 'ALLMULTI' is in the provided flags string, and enable it if not.
+
+    :param interface: Name of the network interface (e.g., 'wlp170s0')
+    :param flags: String of flags (e.g., "0x11243(UP,BROADCAST,RUNNING,ALLMULTI,MULTICAST)")
+    """
+    if "ALLMULTI" in flags:
+        print(f"'ALLMULTI' is already enabled on {interface}.")
+    else:
+        print(f"'ALLMULTI' not found in flags. Enabling on {interface}...")
+        try:
+            subprocess.run(
+                ["sudo", "ip", "link", "set", "dev", interface, "allmulticast", "on"],
+                check=True
+            )
+            print(f"'ALLMULTI' enabled on {interface}.")
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to enable 'ALLMULTI' on {interface}: {e}")
+
+def generate_random_link_local():
+    """Generate a random valid IPv6 link-local address."""
+    # FE80::/10 means the first 10 bits are fixed (1111111010)
+    # Generate random bits for the rest of the address
+    random_suffix = ":".join(
+        f"{random.randint(0, 0xffff):04x}" for _ in range(6)
+    )
+    return f"fe80::{random_suffix}"
+
+def assign_link_local_address(interface, address):
+    """Assign a link-local address to the interface."""
+    try:
+        subprocess.run(
+            ["ip", "-6", "addr", "add", address + "/64", "dev", interface],
+            check=True
+        )
+        print(f"Assigned address {address} to interface {interface}")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to assign address {address}: {e}")
+
 def generate_random_mac():
     # Generate a random MAC address
     mac = [random.randint(0x00, 0xFF) for _ in range(6)]

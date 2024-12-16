@@ -1031,7 +1031,13 @@ if __name__ == "__main__":
         if not iface.ip:
             print(f"[-] Error: {iface.interface_name} does not seem to have addressing set up.")
             exit()
-    
+        if not iface.ipv6:
+            iface.ipv6 = generate_random_link_local()
+            assign_link_local_address(iface.interface_name, iface.ipv6)
+
+    if iface.flags:
+        ensure_allmulti(iface.interface_name, iface.flags)
+
     # Initialize global display status info and input control class
     status_info = StatusInfo(interface_name)
     # set cli display args
