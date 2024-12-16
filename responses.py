@@ -420,10 +420,13 @@ def build_aaaa_record(mdns_payload: bytes, domain_name: str, src_ipv6: str) -> b
 
 def build_cpath_zc_txt_payload() -> bytes:
 
-    txt_cpath = "CPath=/zc".encode()
+    txt_cpath = "CPath=/spotofiyzc".encode()
     txt_cpath_len = struct.pack('!B',len(txt_cpath))
 
-    txt_payload = txt_cpath_len + txt_cpath
+    txt_ver = "VERSION=1".encode()
+    txt_ver_len = struct.pack('!B', len(txt_ver))
+
+    txt_payload = txt_cpath_len + txt_cpath + txt_ver_len + txt_ver
     txt_payload_len = struct.pack('!H', len(txt_payload))
 
     return txt_payload_len, txt_payload
