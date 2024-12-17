@@ -104,3 +104,18 @@ def parse_tp_link(packet: bytes, cur_client: Client):
                     tpl_fh.write(f'Group ID:           {tp_dev["Group ID"]}\n')
                     tpl_fh.write(f'Method:             {tp_dev["Method"]}\n')
                     tpl_fh.write('---------------------------------------------------------\n')
+
+    elif packet[:2] == b"\x02\x00":
+        json_string = packet[16:].decode('ascii')
+        try:
+            dict_obj = json.loads(json_string)
+        except Exception as e:
+            print(e)
+            return
+        params = dict_obj.get("params")
+        if params:
+            rsa_key = params.get("rsa_key")
+            if rsa_key:
+                with open(f"{cur_client.ip_address}_tp-link_rsa.pub",'w') as rsa_fh:
+                    rsa_fh.write(rsa_key)
+                cur_client.notes.add("tp_link_pubkey_found")
