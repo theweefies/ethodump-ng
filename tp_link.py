@@ -112,10 +112,55 @@ def parse_tp_link(packet: bytes, cur_client: Client):
         except Exception as e:
             print(e)
             return
+        
+        cur_client.protocols.add('TMP')
+        cur_client.services.add('TP-LINK MESH')
+
         params = dict_obj.get("params")
         if params:
             rsa_key = params.get("rsa_key")
             if rsa_key:
                 with open(f"{cur_client.ip_address}_tp-link_rsa.pub",'w') as rsa_fh:
                     rsa_fh.write(rsa_key)
-                cur_client.notes.add("tp_link_pubkey_found")
+                cur_client.notes.add("tp_link_mesh_pubkey_found")
+            else:
+                with open(f"{cur_client.ip_address}_tp-link_mesh.txt",'a') as tmp_fh:
+                    max_key_length = max(len(key) for key in params.keys())  # Find the longest key
+                    for k, v in params.items():
+                        tmp_fh.write(f"    {k:<{max_key_length}} :   {v}\n")
+
+        result = dict_obj.get("result")
+        if result:
+            tmp_port = result.get("tmp_port")
+            if tmp_port:
+                cur_client.notes.add(f'tmp_port: {tmp_port}')
+            hw_ver = result.get("hardware_version")
+            if hw_ver:
+                cur_client.oses.add(f'hw: {hw_ver}')
+            mac = result.get("mac")
+            if (mac and not cur_client.src_mac) or (mac and mac.lower() != cur_client.src_mac):
+                cur_client.src_mac = mac.lower()
+            role = result.get("role")
+            if role:
+                cur_client.notes.add(f"role: {role}")
+            dev_model = result.get("device_model")
+            if dev_model:
+                cur_client.oses.add(f"mo: {dev_model}")
+            ip = result.get("ip")
+            if (ip and not cur_client.ip_address) or (ip and ip != cur_client.ip_address):
+                cur_client.ip_address = ip
+            dev_type = result.get("device_type")
+            if dev_type:
+                cur_client.oses.add(f"ty: {dev_type}")
+            factory_default = result.get("factory_default")
+            if factory_default:
+                cur_client.notes.add("factory_default: true")
+
+            with open(f"{cur_client.ip_address}_tp-link_mesh.txt",'a') as tmp_fh:
+                max_key_length = max(len(key) for key in result.keys())  # Find the longest key
+                for k, v in result.items():
+                    tmp_fh.write(f"    {k:<{max_key_length}} :   {v}\n")
+
+
+            
+            
