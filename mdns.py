@@ -232,6 +232,7 @@ def process_mdns_packet(packet: MDNSPacket, cur_client: Client) -> None:
             service_name = extract_service_name(record.name)
             if service_name:
                 cur_client.services.add(service_name)
+                
         elif record.type_ == MDNS_PTR and record_cat == 'record':
             hostname = extract_hostname(record.domain_name)
             if hostname:
