@@ -123,6 +123,8 @@ def parse_tp_link(packet: bytes, cur_client: Client):
                 with open(f"{cur_client.ip_address}_tp-link_rsa.pub",'w') as rsa_fh:
                     rsa_fh.write(rsa_key)
                 cur_client.notes.add("tp_link_mesh_pubkey_found")
+                with open(f"{cur_client.ip_address}_tp-link_rsa.nonce",'wb') as nonce_fh:
+                    nonce_fh.write(packet[8:16])
             else:
                 with open(f"{cur_client.ip_address}_tp-link_mesh.txt",'a') as tmp_fh:
                     max_key_length = max(len(key) for key in params.keys())  # Find the longest key
