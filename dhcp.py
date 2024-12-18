@@ -216,7 +216,7 @@ def extract_dhcp_client_details(dhcp_packet: DHCPPacket, cur_client: Client, cli
                 clients[mac][dhcp_packet.your_ip].ip_address = dhcp_packet.your_ip
                 clients[mac].pop('0.0.0.0')
     
-def get_dhcp_option(dhcp_packet: DHCPPacket, option_code: int) -> bytes | None:
+def get_dhcp_option(dhcp_packet: DHCPPacket, option_code: int) -> bytes:
     """
     Retrieve a DHCP option value by its code from a DHCPPacket.
     """
@@ -226,7 +226,7 @@ def get_dhcp_option(dhcp_packet: DHCPPacket, option_code: int) -> bytes | None:
 
     return None  # Return None if the option is not found
 
-def parse_dhcp_packet(data: bytes) -> DHCPPacket | None:
+def parse_dhcp_packet(data: bytes) -> DHCPPacket:
     """
     Function to parse a DHCP packet.
     """

@@ -23,7 +23,7 @@ class ARP:
     target_mac: str
     target_ip: str
 
-def parse_arp(reader: BytesIO) -> ARP | None:
+def parse_arp(reader: BytesIO) -> ARP:
     """
     ARP Parsing Function
     """    

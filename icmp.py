@@ -95,7 +95,7 @@ def process_icmpv6_packet(packet, cur_client) -> None:
         cur_client.ttl = packet.cur_hop_limit
         cur_client.color = DARK_RED
 
-def parse_icmp(data: bytes) -> ICMP | None:
+def parse_icmp(data: bytes) -> ICMP:
     """
     Function to parse ICMP packets.
     """
@@ -107,7 +107,7 @@ def parse_icmp(data: bytes) -> ICMP | None:
 
     return ICMP(type_, code, checksum, id, seq, timestamp)
 
-def parse_icmpv6(reader: BytesIO) -> ICMPv6MulticastListenerReport | ICMPv6EchoReq | None:
+def parse_icmpv6(reader: BytesIO):
     """
     Function to parse ICMPv6 packets.
     """

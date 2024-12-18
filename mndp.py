@@ -27,7 +27,7 @@ class MNDPPacket:
     seqno: int
     tlvs: list
 
-def parse_mndp_packet(data: bytes) -> (MNDPPacket | None):
+def parse_mndp_packet(data: bytes) -> MNDPPacket:
 
     reader = BytesIO(data)
     tlvs = []

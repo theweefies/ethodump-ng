@@ -741,7 +741,7 @@ def packet_parser(iface: Interface) -> None:
         except queue.Empty:
             continue  # Continue checking the flag if the queue is empty
 
-def packet_writer(filename: str | None) -> None:
+def packet_writer(filename: str) -> None:
     """
     One of main threads. Function pulls packets from dedicated queue
     for writing to file.
@@ -754,7 +754,7 @@ def packet_writer(filename: str | None) -> None:
         except queue.Empty:
             continue
 
-def packet_listener(iface: Interface, filename: str | None):
+def packet_listener(iface: Interface, filename: str):
     """
     One of main theads. Function reads raw packets from a socket,
     then writing them to a parsing and writing queue. 
@@ -784,7 +784,7 @@ def packet_listener(iface: Interface, filename: str | None):
         if s:
             s.close()
 
-def write_packet(p: bytes, filename: str | None) -> None:
+def write_packet(p: bytes, filename: str) -> None:
     """
     Function to write packets to a pcap file.
     """

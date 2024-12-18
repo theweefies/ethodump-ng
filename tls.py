@@ -188,7 +188,7 @@ def parse_tls_extensions(stream: BytesIO) -> list[TLSExtension]:
 
     return extensions
 
-def parse_tls_payload(payload: bytes) -> TLSClientHello | None:
+def parse_tls_payload(payload: bytes) -> TLSClientHello:
     """
     Function to parse a TLS payload. Does not support QUIC IETF.
     """

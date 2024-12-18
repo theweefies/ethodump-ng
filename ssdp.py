@@ -30,7 +30,7 @@ def parse_user_agent(user_agent):
     # Return None if no pattern matches
     return None
 
-def parse_ssdp_packet(payload: bytes, cur_client: Client, grab_resources: bool=False) -> None | SSDP:
+def parse_ssdp_packet(payload: bytes, cur_client: Client, grab_resources: bool=False): # -> None | SSDP:
     """
     Function to parse SSDP Notify messages and extract resource
     urls and perform os detection.

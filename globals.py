@@ -92,7 +92,7 @@ def determine_system_version() -> bool:
                 return True
         elif 'OPENWRT_ARCH' in line:
             architecture = line.split('=')[1].lower()
-            if architecture and 'mips' in architecture:
+            if architecture and ('mips' in architecture or 'arm_cortex-a7' in architecture):
                 print('[-] MIPS Architecture detected...')
                 endian = '>'
                 return True
@@ -193,16 +193,16 @@ def generate_random_version_string():
     version_string = f"{major}.{minor}.{patch}-g{hash_part}"
     return version_string
 
-BASE32 = generate_base32_id()
-RANDOM_MAC = generate_random_mac()
-SHA1_HASH = generate_sha1_hash(RANDOM_MAC)
-PK = generate_hex_string(64)
-SHORT_PK = generate_random_public_key()
-CID = generate_hex_string(32)
-UUID_K = str(uuid.uuid4())
+BASE32          = generate_base32_id()
+RANDOM_MAC      = generate_random_mac()
+SHA1_HASH       = generate_sha1_hash(RANDOM_MAC)
+PK              = generate_hex_string(64)
+SHORT_PK        = generate_random_public_key()
+CID             = generate_hex_string(32)
+UUID_K          = str(uuid.uuid4())
 VERSION_TRIPLET = generate_random_version_code()
-MODEL_NAME = generate_random_model_name()
-LONG_VERSION = generate_random_version_string()
+MODEL_NAME      = generate_random_model_name()
+LONG_VERSION    = generate_random_version_string()
 PRIVATE_KEY_RSA = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048
@@ -377,7 +377,7 @@ def debug_to_log(payload: bytes) -> None:
     f_open.write(payload)
     f_open.close()
 
-def is_utf8_decodable(val: bytes) -> str | bool:
+def is_utf8_decodable(val: bytes):
     """
     Function to attempt utf decoding.
     """
@@ -594,7 +594,7 @@ def get_manufacturer(self: Client) -> None:
         else:
             self.manufacturer = 'Unknown'
 
-def check_make_path(dir: str, filename: str) -> str | None:
+def check_make_path(dir: str, filename: str):
     """
     Function to check if a path exists; creates
     it if it does not. Returns the full path if 

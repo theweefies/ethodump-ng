@@ -50,7 +50,7 @@ class DNSPTR:
     type_: int
     class_: int
     ttl: int
-    domain_name: str | bytes
+    domain_name: str
 
 @dataclass
 class DNSA:
@@ -82,7 +82,7 @@ class DNSCNAME:
     type_: int
     class_: int
     ttl: int
-    cname: str | bytes
+    cname: str
 
 @dataclass
 class DNSSRV:
@@ -101,7 +101,7 @@ class DNSNSEC: # Need to work out parsing for the rr type bitmap
     type_: int
     class_: int
     ttl: int
-    next_domain_name: str | bytes
+    next_domain_name: str
     rr_type_bitmap: bytes
 
 @dataclass
@@ -120,7 +120,7 @@ class DNSSOA:
 
 @dataclass
 class DNSOPT:
-    name: bytes | str
+    name: bytes
     type_: int
     udp_payload_size: int
     higher_bits: bytes
@@ -192,7 +192,7 @@ def parse_header(reader: BytesIO) -> DNSHeader:
 
     return DNSHeader(*items)
 
-def parse_record(reader: BytesIO, record_type: str=None) -> None | DNSPTR | DNSANY | DNSA | DNSAAAA | DNSTXT | DNSSRV | DNSNSEC | DNSOPT:
+def parse_record(reader: BytesIO, record_type: str=None):
     """
     Parse DNS Record Types.
     """

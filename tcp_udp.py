@@ -514,7 +514,7 @@ def checksum(data):
 NOTE: PACKET PARSING FUNCTIONS
 """
 
-def parse_spanning_tree(data: bytes, reader: BytesIO) -> SPANNINGTreePacket | None:
+def parse_spanning_tree(data: bytes, reader: BytesIO) -> SPANNINGTreePacket:
 
     dst_mac_bytes, src_mac_bytes, length = struct.unpack('!6s6s2s', data)
     dst_mac = bytes_to_mac(dst_mac_bytes)
@@ -561,7 +561,7 @@ def parse_spanning_tree(data: bytes, reader: BytesIO) -> SPANNINGTreePacket | No
                             bridge_pri, bridge_system_id_ext, bridge_system_id, port_id,\
                             message_age, max_age, hello_time, forward_delay)
 
-def parse_eth_header(reader: BytesIO) -> ETHHeader | None:
+def parse_eth_header(reader: BytesIO) -> ETHHeader:
     """
     Ethernet Header Parsing Function
     """
@@ -582,7 +582,7 @@ def parse_eth_header(reader: BytesIO) -> ETHHeader | None:
 
     return ETHHeader(dst_mac, src_mac, eth_type)
 
-def parse_ip_header(reader: BytesIO) -> IPHeader | None:
+def parse_ip_header(reader: BytesIO) -> IPHeader:
     """
     IPv4 Header Parsing Function
     """
@@ -609,7 +609,7 @@ def parse_ip_header(reader: BytesIO) -> IPHeader | None:
     return IPHeader(version, header_length, dsf, total_length, identification, \
                     flags, frag_offset, ttl, proto, checksum, src_ip, dst_ip, options)
 
-def parse_ipv6_header(reader: BytesIO) -> IPv6Header | None:
+def parse_ipv6_header(reader: BytesIO) -> IPv6Header:
     """
     IPv6 Header Parsing Function
     """
@@ -626,7 +626,7 @@ def parse_ipv6_header(reader: BytesIO) -> IPv6Header | None:
     return IPv6Header(version, payload_length, next_header,\
                       hop_limit, src_ipv6, dst_ipv6)
 
-def parse_udp_header(reader: BytesIO) -> UDPHeader | None:
+def parse_udp_header(reader: BytesIO) -> UDPHeader:
     """
     UDP Header Parsing Function
     """
@@ -639,7 +639,7 @@ def parse_udp_header(reader: BytesIO) -> UDPHeader | None:
 
     return UDPHeader(src_port, dst_port, udp_total_len, checksum, udp_payload_len)
 
-def parse_tcp_header(reader: BytesIO) -> TCPHeader | None:
+def parse_tcp_header(reader: BytesIO) -> TCPHeader:
     """
     TCP Header Parsing Function
     """

@@ -154,7 +154,7 @@ def format_and_clean_netbios_name(name: str) -> tuple[str, str]:
     # Append formatted control character if it was found
     return cleaned_name, control_char_formatted
 
-def decode_netbios_name(encoded_name: bytes) -> None | tuple[str,str]:
+def decode_netbios_name(encoded_name: bytes): # -> None | tuple[str,str]:
     """
     Decode a NetBIOS name from its 'half-ASCII' encoding.
     """
@@ -178,7 +178,7 @@ def decode_netbios_name(encoded_name: bytes) -> None | tuple[str,str]:
     # NetBIOS names are space-padded to 16 chars, so strip trailing spaces
     return cleaned_name, control_code
 
-def parse_netbios_record(reader: BytesIO, cur_client: Client, record_type: int=None) -> None | NetBIOSNameRecord | NetBIOSQuery:
+def parse_netbios_record(reader: BytesIO, cur_client: Client, record_type: int=None): # -> None | NetBIOSNameRecord | NetBIOSQuery:
     """
     Function to parse a netbios record.
     """
@@ -229,7 +229,7 @@ def parse_netbios_header(reader: BytesIO) -> NBNSHeader:
 
     return NBNSHeader(transaction_id, flags, message_type, questions, answers, authority, additional)
 
-def parse_netbios_packet(data: bytes, cur_client: Client) -> None | NBNSPacket:
+def parse_netbios_packet(data: bytes, cur_client: Client): # -> None | NBNSPacket:
     """
     Function to parse and craft an NBNS dataclass.
     """

@@ -65,7 +65,7 @@ def detect_tls_client_hello(connection):
         print(f"Error detecting TLS Client Hello: {e}")
     return False
 
-def detect_service_banner(payload: bytes | str, cur_client) -> None:
+def detect_service_banner(payload, cur_client) -> None:
     """
     Function to check for service banners
     """
@@ -121,7 +121,7 @@ def decode_credentials(proxy_auth_header: str) -> str:
 
     return auth_scheme + " - " + decoded_credentials
 
-def parse_http(payload: bytes | str, cur_client, resource_grab: bool=False) -> None:
+def parse_http(payload, cur_client, resource_grab: bool=False) -> None:
     """
     Function to extract data from HTTP and perform resource grabs.
     """

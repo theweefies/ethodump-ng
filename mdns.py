@@ -46,7 +46,7 @@ class MDNSPTR:
     class_: int
     qu_bit: int
     ttl: int
-    domain_name: str | bytes
+    domain_name: str
 
 @dataclass
 class MDNSA:
@@ -94,7 +94,7 @@ class MDNSNSEC: # Need to work out parsing for the rr type bitmap
     class_: int
     qu_bit: int
     ttl: int
-    next_domain_name: str | bytes
+    next_domain_name: str
     rr_type_bitmap: bytes
 
 @dataclass
@@ -114,7 +114,7 @@ class MDNSAuthoratativeNameservers:
 
 @dataclass
 class MDNSOPT:
-    name: bytes | str
+    name: bytes
     type_: int
     udp_payload_size: int
     cache_flush: int
@@ -131,7 +131,7 @@ class MDNSPacket:
     authorities: list
     additionals: list
 
-def is_not_sha1(string: str) -> bool | str:
+def is_not_sha1(string: str):
     """
     Function to use a regex pattern to match a 40-character 
     hexadecimal/sha1 string. If the string is not, the
@@ -169,7 +169,7 @@ def extract_service_name(name: bytes) -> str:
         return service_match.group(1)  # Service name without the leading '_'
     return ""
 
-def model_check(model: str) -> None | str:
+def model_check(model: str) -> str:
     """
     Function to search for model identifiers in manufacture databases.
     """
@@ -222,7 +222,7 @@ def process_mdns_packet(packet: MDNSPacket, cur_client: Client) -> None:
     """
     service_restricted_names = ["Spotify", "google", "localhost"]
     
-    def process_record(record: MDNSA | MDNSAAAA | MDNSANY | MDNSPTR | MDNSNSEC | MDNSSRV | MDNSTXT, record_cat: str) -> None | str | bytes:
+    def process_record(record, record_cat: str):
         """
         Function to process an mDNS record of accepted types to
         perform the task of the parent function.
@@ -327,7 +327,7 @@ def parse_header(reader: BytesIO) -> MDNSHeader:
 
     return MDNSHeader(*items)
 
-def parse_record(reader: BytesIO, record_type: str=None) -> None | MDNSPTR | MDNSANY | MDNSA | MDNSAAAA | MDNSTXT | MDNSSRV | MDNSNSEC | MDNSOPT:
+def parse_record(reader: BytesIO, record_type: str=None):
     """
     Parse M/DNS Record Types.
     """
@@ -459,7 +459,7 @@ def parse_record(reader: BytesIO, record_type: str=None) -> None | MDNSPTR | MDN
     else:
         return None
 
-def parse_authority(reader: BytesIO) -> MDNSAuthoratativeNameservers | None:
+def parse_authority(reader: BytesIO) -> MDNSAuthoratativeNameservers:
     """
     Parses a dns authoratative nameserver record.
     """

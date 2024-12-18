@@ -84,7 +84,7 @@ def calculate_igmp_checksum(igmp_packet):
 
     return igmp_packet_with_checksum
 
-def parse_igmp(payload: bytes) -> None | IGMPQuery | IGMPReport:
+def parse_igmp(payload: bytes):
     """
     Function to parse IGMP packets.
     """
