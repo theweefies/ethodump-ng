@@ -18,6 +18,8 @@ MAIL_SLOT = '<00>'
 
 MSBROWSE = 'MSBROWSE'
 
+DOMAIN_ANNOUNCEMENT = 12 # \x0c
+
 SMB1_SERVER_COMPONENT = b'\xff\x53\x4d\x42'
 SMB2_3_SERVER_COMPONENT = b'\xff\x53\x4d\x42'
 
@@ -246,6 +248,44 @@ def parse_netbios_packet(data: bytes, cur_client: Client): # -> None | NBNSPacke
     additionals = [record for record in (parse_netbios_record(reader, cur_client) for _ in range(header.num_additionals)) if record is not None]
 
     return NBNSPacket(header, questions, answers, authorities, additionals)
+
+def process_nbns_packet(packet: NetBIOSDatagram, cur_client: Client) -> None:
+    """
+    Function to process a parsed NetBIOSDatagram structure.
+    """
+    if not packet:
+        return
+    
+    if not cur_client.ip_address:
+        cur_client.ip_address = packet.src_ip
+
+    if packet.src_name:
+        tmp_hostname = packet.src_name
+        if MAIL_SLOT in packet.src_name:
+            tmp_hostname = packet.src_name.replace(MAIL_SLOT,'')
+        cur_client.hostnames.add(tmp_hostname)
+
+    if packet.dst_name:
+        cur_client.connections.add(packet.dst_name)
+
+    if packet.blocks:
+        for block in packet.blocks:
+            if isinstance(block, SMBHeader):
+                if block.server_component == SMB1_SERVER_COMPONENT:
+                    cur_client.protocols.add('SMB')
+            elif isinstance(block, MSFWindowsBrowser):
+                if block.command != DOMAIN_ANNOUNCEMENT:
+                    if block.hostname:
+                        tmp_hostname = block.hostname
+                        if MAIL_SLOT in block.hostname:
+                            tmp_hostname = block.hostname.replace(MAIL_SLOT,'')
+                        cur_client.hostnames.add(tmp_hostname)
+                    if block.os_major and block.os_minor:
+                        cur_client.notes.add(f'os_ver_from_smb: {block.os_major}.{block.os_minor}')
+                    if block.browser_major and block.browser_minor:
+                        cur_client.notes.add(f'browser_ver_from_smb: {block.browser_major}.{block.browser_minor}')
+                    if block.host_comment:
+                        cur_client.services.add(block.host_comment)
 
 def parse_netbios_datagram(data: bytes):
     """
