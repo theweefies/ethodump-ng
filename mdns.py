@@ -164,9 +164,14 @@ def extract_service_name(name: bytes) -> str:
     except UnicodeDecodeError:
         decoded_name = str(name)
         pass
+    
     service_match = re.match(r'_([^._]+)', decoded_name)
     if service_match:
         return service_match.group(1)  # Service name without the leading '_'
+    elif '._tcp.local' in decoded_name:
+        return decoded_name.replace('._tcp.local','')
+    elif '._udp.local' in decoded_name:
+        return decoded_name.replace('._udp.local','')
     return ""
 
 def model_check(model: str) -> str:
@@ -239,19 +244,21 @@ def process_mdns_packet(packet: MDNSPacket, cur_client: Client) -> None:
                 cur_client.connections.add(hostname)
                 return None
             
-        # Sometimes, devices will query for a SeRVer wth an SRV record;
+        # Sometimes, devices will query for a server wth an SRV record;
         # In this case, the 'name' of the record query indicates something
         # they want to connect to, not their name/hostname
         elif record.type_ == MDNS_SRV and record_cat == 'question':
-            hostname = extract_hostname(record.name)
-            cur_client.connections.add(hostname)
+            service_name = extract_service_name(record.name)
+            if service_name:
+                cur_client.services.add(service_name)
             return None
         
         elif record.type_ == MDNS_TXT and record_cat == 'question':
             service_name = extract_service_name(record.name)
             if service_name:
                 cur_client.services.add(service_name)
-                return None
+            return None
+        
         elif record.type_ in [MDNS_ANY, MDNS_TXT, MDNS_SRV, MDNS_A, MDNS_AAAA]:
             hostname = extract_hostname(record.name)
             if record.type_ == MDNS_SRV and record.port:
@@ -376,6 +383,8 @@ def parse_record(reader: BytesIO, record_type: str=None):
             return None
         
     elif type_ == MDNS_TXT:
+        if record_type == 'question':
+            return MDNSTXT(name, type_, class_, qu_bit, 255, [])
         data = reader.read(6)
         if len(data) < 6:
             return None
