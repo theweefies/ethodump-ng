@@ -27,6 +27,7 @@ import yaml.scanner
 ETH_P        = b'\x08\x00'
 ETH_IPV6     = b'\x86\xDD'
 ARP_P        = b'\x08\x06'
+LLDP_P       = b'\x88\xCC'
 REALTEK_L2_P = b'\x88\x99'
 
 ETH_HEADER_LEN = 14
