@@ -27,24 +27,25 @@ from _netifaces import Interface
 
 from globals import *
 from arp import parse_arp, process_arp
-from cdp import parse_cdp_response
 from dhcp import *
-from dhip import parse_dhip
 from dns_ import parse_dns_packet, process_dns_packet
-from hikvision import parse_hikvision
 from http_ import detect_service_banner, parse_http, start_server, start_https_server
 from icmp import parse_icmp, parse_icmpv6, process_icmpv6_packet
 from igmp import parse_igmp
 from ipp import parse_ipp
 from mdns import parse_mdns_packet, prepare_redirect, process_mdns_packet
-from mndp import parse_mndp_packet, process_mndp_packet
 from netbios import parse_netbios_datagram, parse_netbios_packet, process_nbns_packet
 from rip import parse_rip_packet
-
 from responses import send_mdns_query
 from ssdp import parse_ssdp_packet
 from tcp_udp import *
 from tls import find_ja3_classification, parse_tls_payload
+
+from asus_disc import parse_asus_disc
+from cdp import parse_cdp_response
+from dhip import parse_dhip
+from hikvision import parse_hikvision
+from mndp import parse_mndp_packet, process_mndp_packet
 from tp_link import parse_tp_link
 from tuya_iot import parse_tuya
 from ubiquiti import parse_ubiquiti
@@ -529,6 +530,12 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                 elif udp_header.dst_port == 6667:
                     if payload[:4] == b'\x00\x00\x55\xaa':
                         parse_tuya(payload, cur_client)
+
+                elif udp_header.src_port == 9999:
+                    parse_asus_disc(payload, cur_client)
+                    cur_client.protocols.add('ASUS Discovery')
+                    return
+
                 
                 elif udp_header.src_port == 10001 or udp_header.dst_port == 10001:
                     parse_ubiquiti(payload, cur_client)
