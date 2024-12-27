@@ -22,18 +22,18 @@ def parse_asus_disc(data: bytes, cur_client: Client) -> None:
         firmware_offset   = 0xE8
         
         # Extract Router SSID (Plain-text string)
-        ssid = data[ssid_offset:ssid_offset + 32].decode('ascii', errors='ignore').strip().replace("\00","")
+        ssid = data[ssid_offset:ssid_offset + 32].decode('ascii', errors='ignore').strip("\00")
         cur_client.notes.add(f'ssid: {ssid}')
         cur_client.notes.add('wireless_router')
 
         # Extract subnet mask Address (4 bytes)
-        subnetmask = data[subnetmask_offset:subnetmask_offset + 32].decode('ascii', errors='ignore').strip().replace("\00","")
+        subnetmask = data[subnetmask_offset:subnetmask_offset + 32].decode('ascii', errors='ignore').strip("\00")
         cur_client.notes.add(f'subnet_mask: {subnetmask}')
 
         # Extract Router Model (Plain-text string)
-        model = data[model_offset:model_offset + 32].decode('ascii', errors='ignore').strip().replace("\00","")
+        model = data[model_offset:model_offset + 32].decode('ascii', errors='ignore').strip("\00")
         cur_client.oses.add(f'mo: ASUS {model}')
 
         # Extract Router Model (Plain-text string)
-        firmware = data[firmware_offset:firmware_offset + 16].decode('ascii', errors='ignore').strip().replace("\00","")
+        firmware = data[firmware_offset:firmware_offset + 16].decode('ascii', errors='ignore').strip("\00")
         cur_client.oses.add(f'fv: {firmware}')

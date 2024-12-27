@@ -536,7 +536,6 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     cur_client.protocols.add('ASUS Discovery')
                     return
 
-                
                 elif udp_header.src_port == 10001 or udp_header.dst_port == 10001:
                     parse_ubiquiti(payload, cur_client)
                     return
