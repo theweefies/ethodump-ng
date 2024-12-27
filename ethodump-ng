@@ -39,6 +39,7 @@ from ipp import parse_ipp
 from mdns import parse_mdns_packet, prepare_redirect, process_mdns_packet
 from mndp import parse_mndp_packet, process_mndp_packet
 from netbios import parse_netbios_datagram, parse_netbios_packet, process_nbns_packet
+from rip import parse_rip_packet
 
 from responses import send_mdns_query
 from ssdp import parse_ssdp_packet
@@ -470,6 +471,8 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     nbns_packet = parse_netbios_packet(payload, cur_client)
                     if not nbns_packet:
                         write_packet(p, "ethodebug.pcap")
+                    else:
+                        process_nbns_packet(nbns_packet, cur_client)
                     cur_client.protocols.add('NETBIOS-UDP-137')
                     return
                 
@@ -480,6 +483,14 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     else:
                         process_nbns_packet(nbns_packet, cur_client)
                     cur_client.protocols.add('NETBIOS-UDP-138')
+                    return
+
+                elif udp_header.src_port == 520:
+                    rip_packet = parse_rip_packet(payload)
+                    if not rip_packet:
+                        write_packet(p, "ethodebug.pcap")
+                    else:
+                        cur_client.protocols.add(f'RIPv{rip_packet.version}')
                     return
 
                 elif udp_header.dst_port == 554:
