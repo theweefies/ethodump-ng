@@ -262,6 +262,8 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             headers[type_] = val
         if self.redirect_path in self.path:
             self.serve_resource("GET", headers, flag=None)
+        elif 'spotify' in self.redirect_path and 'spotofiy' in self.path:
+            self.serve_resource("GET", headers, flag=None)
         elif '/ws/app' in self.path:
             if SESSION_STATE == SESSION_NONE:
                 self.serve_resource("GET", headers, flag=None)
