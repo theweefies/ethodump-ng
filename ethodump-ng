@@ -35,12 +35,13 @@ from igmp import parse_igmp
 from ipp import parse_ipp
 from lldp import parse_lldp, process_lldp
 from mdns import parse_mdns_packet, prepare_redirect, process_mdns_packet
-from netbios import parse_netbios_datagram, parse_netbios_packet, process_nbns_packet
+from netbios import parse_netbios_datagram, parse_netbios_packet, process_nbns_dg_packet, process_nbns_packet
 from rip import parse_rip_packet
 from responses import send_mdns_query
 from ssdp import parse_ssdp_packet
 from tcp_udp import *
 from tls import find_ja3_classification, parse_tls_payload
+from websocket import parse_websocket_api
 
 from asus_disc import parse_asus_disc
 from cdp import parse_cdp_response
@@ -479,7 +480,6 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                         write_packet(p, "ethodebug.pcap")
                     else:
                         process_nbns_packet(nbns_packet, cur_client)
-                    cur_client.protocols.add('NETBIOS-UDP-137')
                     return
                 
                 elif udp_header.src_port == 138:
@@ -487,8 +487,7 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                     if not nbns_packet:
                         write_packet(p, "ethodebug.pcap")
                     else:
-                        process_nbns_packet(nbns_packet, cur_client)
-                    cur_client.protocols.add('NETBIOS-UDP-138')
+                        process_nbns_dg_packet(nbns_packet, cur_client)
                     return
 
                 elif udp_header.src_port == 520:
@@ -535,6 +534,10 @@ def parse_packet(p: bytes, own_iface: Interface) -> None:
                 elif udp_header.dst_port == 6667:
                     if payload[:4] == b'\x00\x00\x55\xaa':
                         parse_tuya(payload, cur_client)
+
+                elif udp_header.dst_port == 8001:
+                    parse_websocket_api(payload, cur_client, GRAB_RESOURCES)
+                    return
 
                 elif udp_header.src_port == 9999:
                     parse_asus_disc(payload, cur_client)

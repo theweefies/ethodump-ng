@@ -621,10 +621,12 @@ def grab_resource(urn: str, user_agent: str, parsed_urn: ParseResult):
     :param filename: The name of the file where the resource will be saved.
     """
     
+    content = None
+
     try:
         # Create a request object with the custom User-Agent
         req = urllib.request.Request(urn, headers={'User-Agent': user_agent})
-
+        req.timeout = 3
         # Perform the request
         with urllib.request.urlopen(req) as response:
             # Read the response
@@ -640,6 +642,8 @@ def grab_resource(urn: str, user_agent: str, parsed_urn: ParseResult):
     
     except URLError:
         pass
+
+    return content
 
 def display_menu(options):
     """

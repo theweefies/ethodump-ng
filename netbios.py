@@ -8,28 +8,32 @@ import socket
 
 from globals import Client
 
-QUERY = 0
-ANSWER = 1
+QUERY                   = 0
+ANSWER                  = 1
 
-SERVER_SERVICE = '<20>'
-MASTER_BROWSER = '<1b>'
-DOMAIN_CONTROLLER = '<1c>'
-MAIL_SLOT = '<00>'
+SERVER_SERVICE          = '<20>'
+MASTER_BROWSER          = '<1b>'
+LOCAL_MASTER_BROWSER    = '<1d>'
+DOMAIN_CONTROLLER       = '<1c>'
+MAIL_SLOT               = '<00>'
 
-MSBROWSE = 'MSBROWSE'
+MSBROWSE                = 'MSBROWSE'
 
-DOMAIN_ANNOUNCEMENT = 12 # \x0c
+DOMAIN_ANNOUNCEMENT     = 0x0C
+UNIQUE_NAME             = 0x20
+GROUP_NAME              = 0x1C
 
-SMB1_SERVER_COMPONENT = b'\xff\x53\x4d\x42'
+SMB1_SERVER_COMPONENT   = b'\xff\x53\x4d\x42'
 SMB2_3_SERVER_COMPONENT = b'\xff\x53\x4d\x42'
 
-TRANSACTION_REQUEST = b'\x25'
+TRANSACTION_REQUEST    = b'\x25'
 
 @dataclass
 class NetBIOSQuery:
     name: str
     type_: int
     class_: int
+    control_code: str
 
 @dataclass
 class NetBIOSNameRecord:
@@ -191,23 +195,13 @@ def parse_netbios_record(reader: BytesIO, cur_client: Client, record_type: int=N
     encoded_name = name.decode('ascii').strip()[:32]
     decoded_name, control_code = decode_netbios_name(encoded_name)
 
-    # print('Decoded name: ', decoded_name, ' Control Code: ', control_code)
-    
     if record_type == QUERY:
-        if control_code == SERVER_SERVICE or control_code == MASTER_BROWSER:
-            cur_client.connections.add(decoded_name)
-        elif control_code == DOMAIN_CONTROLLER:
-            cur_client.hostnames.add(decoded_name)
         record_contents = reader.read(4)
         if len(record_contents) < 4:
             return None
         type_, class_ = struct.unpack('!HH', record_contents)
-        return NetBIOSQuery(decoded_name, type_, class_)
+        return NetBIOSQuery(decoded_name, type_, class_, control_code)
     else:
-        if MSBROWSE in decoded_name:
-            cur_client.services.add(decoded_name)
-        else:
-            cur_client.hostnames.add(decoded_name)
         record_contents = reader.read(12)
         if len(record_contents) < 12:
             return None
@@ -249,7 +243,42 @@ def parse_netbios_packet(data: bytes, cur_client: Client): # -> None | NBNSPacke
 
     return NBNSPacket(header, questions, answers, authorities, additionals)
 
-def process_nbns_packet(packet: NetBIOSDatagram, cur_client: Client) -> None:
+def process_nbns_packet(packet: NBNSPacket, cur_client: Client) -> None:
+    """
+    Function to process a parsed NetBIOSDatagram structure.
+    """
+    if not packet:
+        return
+    
+    # Extract hostnames from the questions
+    for question in packet.questions:
+        if isinstance(question, NetBIOSQuery):
+            cur_client.notes.add(f"query: {question.name.lower()}")
+            if question.control_code in [SERVER_SERVICE, MASTER_BROWSER, LOCAL_MASTER_BROWSER]:
+                cur_client.services.add(question.name)
+            elif question.control_code == DOMAIN_CONTROLLER:
+                cur_client.hostnames.add(question.name)
+
+    # Extract details from answers, authorities, and additionals
+    records = packet.answers + packet.authorities + packet.additionals
+    for record in records:
+        if isinstance(record, NetBIOSNameRecord):
+            cur_client.hostnames.add(record.name.lower())
+            if record.type_ == UNIQUE_NAME:  # NetBIOS unique name
+                cur_client.services.add("NetBIOS Service")
+            elif record.type_ == GROUP_NAME:  # Group name (e.g., Domain Controllers)
+                cur_client.services.add("NetBIOS Group")
+            elif MSBROWSE in record.name:
+                cur_client.services.add(record.name)
+            else:
+                cur_client.hostnames.add(record.name)
+            if record.address:
+                cur_client.dns_names.add(record.address)
+
+    # Add protocols detected
+    cur_client.protocols.add("NBNS-UDP-137")
+
+def process_nbns_dg_packet(packet: NetBIOSDatagram, cur_client: Client) -> None:
     """
     Function to process a parsed NetBIOSDatagram structure.
     """
@@ -286,6 +315,7 @@ def process_nbns_packet(packet: NetBIOSDatagram, cur_client: Client) -> None:
                         cur_client.notes.add(f'browser_ver_from_smb: {block.browser_major}.{block.browser_minor}')
                     if block.host_comment:
                         cur_client.services.add(block.host_comment)
+    cur_client.protocols.add("NBNS-UDP-138")
 
 def parse_netbios_datagram(data: bytes):
     """
