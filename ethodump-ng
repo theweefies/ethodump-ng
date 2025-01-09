@@ -446,7 +446,7 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
                     current_date_time = time.strftime('%Y-%m-%d %H:%M', time.localtime())
                     status_line = f"{status_info.interface} ][ Elapsed: {elapsed_str} ][ {current_date_time} {status_info.status_message}"
                     
-                    display_body += " " + status_line + "\n"
+                    display_body += " " + status_line + "\n\n"
 
                     display_body += str(selected_client)
 
