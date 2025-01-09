@@ -234,9 +234,9 @@ def process_mdns_packet(packet: MDNSPacket, cur_client: Client) -> None:
         """
         hostname = None
         if record.type_ == MDNS_PTR and record_cat == 'question':
-            service_name = extract_service_name(record.name)
-            if service_name:
-                cur_client.services.add(service_name)
+            query_name = extract_service_name(record.name)
+            if query_name:
+                cur_client.queries.add(query_name)
                 
         elif record.type_ == MDNS_PTR and record_cat == 'record':
             hostname = extract_hostname(record.domain_name)
@@ -248,15 +248,15 @@ def process_mdns_packet(packet: MDNSPacket, cur_client: Client) -> None:
         # In this case, the 'name' of the record query indicates something
         # they want to connect to, not their name/hostname
         elif record.type_ == MDNS_SRV and record_cat == 'question':
-            service_name = extract_service_name(record.name)
-            if service_name:
-                cur_client.services.add(service_name)
+            query_name = extract_service_name(record.name)
+            if query_name:
+                cur_client.queries.add(query_name)
             return None
         
         elif record.type_ == MDNS_TXT and record_cat == 'question':
-            service_name = extract_service_name(record.name)
-            if service_name:
-                cur_client.services.add(service_name)
+            query_name = extract_service_name(record.name)
+            if query_name:
+                cur_client.queries.add(query_name)
             return None
         
         elif record.type_ in [MDNS_ANY, MDNS_TXT, MDNS_SRV, MDNS_A, MDNS_AAAA]:
