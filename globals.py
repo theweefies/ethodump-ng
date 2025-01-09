@@ -503,6 +503,7 @@ class Client:
             self.cred_pairs = set()
             self.count = 0
             self.color = None
+            self.queries = set()
             self.notes = set()
             get_manufacturer(self)
 
@@ -535,6 +536,7 @@ class Client:
             ("TLS SNIs",                ", ".join(self.tls_snis)),
             ("Credential Pairs",        ", ".join(self.cred_pairs)),
             ("Packet Count",                      self.count),
+            ("Queries",                 ", ".join(self.queries)),
             ("Notes",                   ", ".join(self.notes)),
         ]
 
