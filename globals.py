@@ -469,6 +469,7 @@ class Flags:
         self.debug_pwrite           = False
         self.extender_present       = False
         self.playback_speed         = 1
+        self.full_expansion         = False
 
 class Client:
     """
@@ -506,37 +507,46 @@ class Client:
 
     def __str__(self):
         """
-        Overrides the string method to provide attribute printing.
+        Overrides the string method to provide attribute printing with aligned colons.
         """
-        # Create a list of formatted strings for each attribute
+        # List of attribute name-value pairs
         attributes = [
-            "\n" + f"Client Count: {self.client_count}",
-            f"Source MAC: {self.src_mac}",
-            f"IP Address: {self.ip_address}",
-            f"IPv6 Address: {self.ipv6_address}",
-            f"OUI: {self.oui}",
-            f"Manufacturer: {self.manufacturer}",
-            f"Hostnames: {', '.join(self.hostnames)}",
-            f"Vendor Class: {self.vendor_class}",
-            f"Services: {', '.join(self.services)}",
-            f"User Agents: {', '.join(self.user_agents)}",
-            f"Make/Model/OS: {', '.join(self.oses)}",
-            f"TTL: {self.ttl}",
-            f"Ports: {', '.join(map(str, self.ports))}",
-            f"Communicants: {', '.join(f'{k}: {v}' for k, v in self.communicants.items())}",
-            f"Connections: {', '.join(self.connections)}",
-            f"Resource URLs: {', '.join(self.resource_urls)}",
-            f"DNS Queries: {', '.join(self.dns_names)}",
-            f"Protocols: {', '.join(self.protocols)}",
-            ', '.join([f"{protocol.upper()} Fingerprint: {fingerprint if fingerprint else 'Not Available'}" for protocol, fingerprint in self.fingerprints.items()]),
-            f"TLS JA3 Classifications: {'; '.join(self.tls_ja3_classifications)}",
-            f"TLS SNIs: {', '.join(self.tls_snis)}",
-            f"Credential Pairs: {', '.join(self.cred_pairs)}",
-            f"Packet Count: {self.count}",
-            f"Notes: {', '.join(self.notes)}"
+            ("Client Count",                      self.client_count),
+            ("Source MAC",                        self.src_mac),
+            ("IP Address",                        self.ip_address),
+            ("IPv6 Address",                      self.ipv6_address),
+            ("OUI",                               self.oui),
+            ("Manufacturer",                      self.manufacturer),
+            ("Hostnames",               ", ".join(self.hostnames)),
+            ("Vendor Class",                      self.vendor_class),
+            ("Services",                ", ".join(self.services)),
+            ("User Agents",             ", ".join(self.user_agents)),
+            ("Make/Model/OS",           ", ".join(self.oses)),
+            ("TTL",                               self.ttl),
+            ("Ports",                   ", ".join(map(str, self.ports))),
+            ("Communicants",            ", ".join(f"{k}: {v}" for k, v in self.communicants.items())),
+            ("Connections",             ", ".join(self.connections)),
+            ("Resource URLs",           ", ".join(self.resource_urls)),
+            ("DNS Queries",             ", ".join(self.dns_names)),
+            ("Protocols",               ", ".join(self.protocols)),
+            ("TLS Fingerprints",        ", ".join([f"{protocol.upper()}: {fingerprint if fingerprint else 'Not Available'}" for protocol, fingerprint in self.fingerprints.items()])),
+            ("TLS JA3 Classifications", "; ".join(self.tls_ja3_classifications)),
+            ("TLS SNIs",                ", ".join(self.tls_snis)),
+            ("Credential Pairs",        ", ".join(self.cred_pairs)),
+            ("Packet Count",                      self.count),
+            ("Notes",                   ", ".join(self.notes)),
         ]
-        # Join all the attribute strings with newlines for pretty printing
-        return "\n".join(attributes)
+
+        # Calculate the maximum key length for alignment
+        max_key_length = max(len(key) for key, _ in attributes)
+
+        # Format each line with proper alignment
+        formatted_attributes = [
+            f"{key:<{max_key_length}}: {value}" for key, value in attributes
+        ]
+
+        # Join all the formatted attribute strings with newlines for pretty printing
+        return "\n".join(formatted_attributes) + "\n"
 
     def to_dict(self, show_ipv6) -> dict:
         """

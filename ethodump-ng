@@ -218,6 +218,15 @@ def handle_key_press(key: str) -> None:
             flags.paused = True
             flags.q_pressed = True
 
+    elif key.lower() == 'c':
+        if not flags.full_expansion:
+            if flags.key_code is not None:  # Check if a row is selected
+                flags.full_expansion = True
+                flags.paused         = True  # Pause the display loop
+        else:
+            flags.full_expansion     = False
+            flags.paused             = False
+
 def display_devices(clients_:dict, status_info: StatusInfo) -> None:
     """
     Function to print out details of the client class instances to the
@@ -400,6 +409,31 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
             time.sleep(.6)  # Update every half second
             
         else:
+            if flags.full_expansion:
+                sys.stdout.write(CLEAR_SCREEN_CURSOR_TO_TOP)
+                # Get the terminal size
+                rows, columns = get_terminal_size()
+
+                clients_dict = clients_.copy()
+
+                # Find the client object with the matching client_count
+                selected_client = None
+                for mac, client in clients_dict.items():
+                    if client.client_count == flags.key_code:
+                        selected_client = client
+                        break
+                if selected_client:
+                    # Print the status line
+                    current_time = time.time()
+                    elapsed_time = int(current_time - status_info.start_time)
+                    elapsed_str = f"{elapsed_time // 60} min" if elapsed_time >= 60 else f"{elapsed_time} s"
+                    current_date_time = time.strftime('%Y-%m-%d %H:%M', time.localtime())
+                    status_line = f"{status_info.interface} ][ Elapsed: {elapsed_str} ][ {current_date_time} {status_info.status_message}"
+                    print(f" {status_line}\n")
+
+                    # Print the full details of the client object
+                    print(selected_client)
+
             time.sleep(.6)
 
 def load_oui(running_pyz:bool) -> None:
