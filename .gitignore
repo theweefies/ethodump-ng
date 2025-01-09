@@ -1,10 +1,4 @@
-c-array-2-python.py
-caps-dev/
 __pycache__/
-ethodebug.pcap
-output.txt
-test.dump
-test.pcap
+*.pcap
 ethod.conf
 *.bak
-
