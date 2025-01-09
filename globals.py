@@ -24,61 +24,77 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 import yaml.scanner
 
-ETH_P        = b'\x08\x00'
-ETH_IPV6     = b'\x86\xDD'
-ARP_P        = b'\x08\x06'
-LLDP_P       = b'\x88\xCC'
-REALTEK_L2_P = b'\x88\x99'
+ETH_P                          = b'\x08\x00'
+ETH_IPV6                       = b'\x86\xDD'
+ARP_P                          = b'\x08\x06'
+LLDP_P                         = b'\x88\xCC'
+REALTEK_L2_P                   = b'\x88\x99'
 
-ETH_HEADER_LEN = 14
-LLC_HEADER_LEN = 8
+ETH_HEADER_LEN                 = 14
+LLC_HEADER_LEN                 = 8
 
-ETH_P_ALL    = 0x0003
+ETH_P_ALL                      = 0x0003
 
 # Standard 80211 pcap global header (24 bytes)
 PCAP_GLOBAL_HEADER_ETHERNET    = b'\xd4\xc3\xb2\xa1\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\x00\x00\x01\x00\x00\x00'
 PCAP_GLOBAL_HEADER_ETHERNET_BE = b'\xa1\xb2\xc3\xd4\x00\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\x00\x00\x00\x01'
 
-MAGIC = 0xa1b2c3d4 # BE
-CIGAM = 0xd4c3b2a1 # LE
+MAGIC                          = 0xa1b2c3d4 # BE
+CIGAM                          = 0xd4c3b2a1 # LE
 
-GENERIC_UPNP_UA = 'Mozilla/5.0 (compatible; UPnP/1.1)'
+GENERIC_UPNP_UA                = 'Mozilla/5.0 (compatible; UPnP/1.1)'
 
-DHIP_HEADER = b'\x20\x00\x00\x00\x44\x48\x49\x50'
+DHIP_HEADER                    = b'\x20\x00\x00\x00\x44\x48\x49\x50'
 
-QUEUE_SIZE = 1000
+QUEUE_SIZE                     = 1000
 
-IPV4_ANY_ADDRESS  = '0.0.0.0'
-IPV6_ANY_ADDRESS  = '::'
-ETH_BCAST_ADDRESS = 'ff:ff:ff:ff:ff:ff'
-ETH_ANY_ADDRESS   = '00:00:00:00:00:00'
-SPAN_TREE_ADDRESS = '01:80:c2:00:00:00'
-CDP_MAC_ADDRESS   = '01:00:0c:cc:cc:cc'
+IPV4_ANY_ADDRESS               = '0.0.0.0'
+IPV6_ANY_ADDRESS               = '::'
+ETH_BCAST_ADDRESS              = 'ff:ff:ff:ff:ff:ff'
+ETH_ANY_ADDRESS                = '00:00:00:00:00:00'
+SPAN_TREE_ADDRESS              = '01:80:c2:00:00:00'
+CDP_MAC_ADDRESS                = '01:00:0c:cc:cc:cc'
 
-clients = {}
-oui_table = {}
-oui_file = "oui.csv"
-tcp_fp_dbase_list = []
-tcp_fps = {}
+clients                        = {}
+oui_table                      = {}
+oui_file                       = "oui.csv"
+tcp_fp_dbase_list              = []
+tcp_fps                        = {}
 
-http_queue = queue.Queue(1000)
-mdns_queue = queue.Queue(100)
-ssdp_queue = queue.Queue(100)
+http_queue                     = queue.Queue(1000)
+mdns_queue                     = queue.Queue(100)
+ssdp_queue                     = queue.Queue(100)
 
-endian = '<'
+endian                         = '<'
 
-HOSTNAME = subprocess.getoutput('hostname')
+HOSTNAME                       = subprocess.getoutput('hostname')
 
-DARK_RED = '\x1b[31m'
-DEFAULT = '\x1b[0m'
-CURSOR_TO_TOP = '\x1b[H'
-CLEAR_SCREEN_CURSOR_TO_TOP = '\x1b[2J\x1b[H'
+DARK_RED                       = '\x1b[31m'
+PURPLE                         = '\033[38;5;54m'
+DARK_BLUE                      = '\033[38;5;18m'
+GREEN                          = '\033[32m'
+DEFAULT                        = '\x1b[0m'
+CURSOR_TO_TOP                  = '\x1b[H'
+CLEAR_SCREEN_CURSOR_TO_TOP     = '\x1b[2J\x1b[H'
 
-UBUNTU_SYSTEM_LIST = ['jammy','focal','kinetic','noble']
-PI_SYSTEM_LIST = ['bullseye','buster','bookworm']
+LEFT_ARROW                     = '\x1b[D'
+RIGHT_ARROW                    = '\x1b[C'
+UP_ARROW                       = '\x1b[A'
+DOWN_ARROW                     = '\x1b[B'
+
+UBUNTU_SYSTEM_LIST             = ['jammy','focal','kinetic','noble']
+PI_SYSTEM_LIST                 = ['bullseye','buster','bookworm']
 
 # Mapping keys to clients for display expansion
-key_mapping = {'w': 10, 'e': 11, 'r': 12, 't': 13, 'y': 14, 'u': 15, 'i': 16, 'o': 17, 'p': 18, 'a': 19, 's':20}
+key_mapping                    = {'w': 10, 'e': 11, 
+                                  'r': 12, 't': 13, 
+                                  'y': 14, 'u': 15, 
+                                  'i': 16, 'o': 17, 
+                                  'p': 18, 'a': 19, 
+                                  's': 20, 'd': 21, 
+                                  'f': 22, 'g': 23, 
+                                  'h': 24, 'j': 25, 
+                                  'k': 26, 'l': 27}
 
 def determine_system_version() -> bool:
     global endian
@@ -441,18 +457,18 @@ class Flags:
     control flags, and thread locks.
     """
     def __init__(self):
-        self.lock = None
-        self.exit_flag = False
-        self.write_wait = True
-        self.key_code = None
-        self.client_count = 1
-        self.paused = False
+        self.lock                   = None
+        self.exit_flag              = False
+        self.write_wait             = True
+        self.key_code               = None
+        self.client_count           = 1
+        self.paused                 = False
         self.paused_device_selected = None
-        self.device_switch = False
-        self.q_pressed = False
-        self.debug_pwrite = False
-        self.extender_present = False
-        self.playback_speed = 1
+        self.device_switch          = False
+        self.q_pressed              = False
+        self.debug_pwrite           = False
+        self.extender_present       = False
+        self.playback_speed         = 1
 
 class Client:
     """

@@ -61,14 +61,15 @@ class StatusInfo:
     Real-Time Display.
     """
     def __init__(self, interface):
-        self.interface = interface
-        self.start_time = time.time()
-        self.status_message = ""
+        self.interface       = interface
+        self.start_time      = time.time()
+        self.status_message  = ""
         self.message_printed = False
-        self.pcap_read = ""
-        self.lower_status = ""
-        self.show_ipv6 = False
-        self.sort_column = None
+        self.pcap_read       = ""
+        self.lower_status    = ""
+        self.show_ipv6       = False
+        self.sort_column     = None
+        self.sort_row        = None
 
 def get_terminal_size():
     try:
@@ -119,18 +120,42 @@ def handle_key_press(key: str) -> None:
     Function to commit control actions after detecting specific
     key presses.
     """
-    if key == '\x1b[D': # LEFT-ARROW
+    if key == LEFT_ARROW: # LEFT-ARROW
         if flags.playback_speed != 1:
             flags.playback_speed -= 1
             #print(f'Playback speed: {flags.playback_speed}x ', end='\r')
             status_info.lower_status = ""
             status_info.lower_status = f'Playback speed: {flags.playback_speed}x '
-    elif key == '\x1b[C': # RIGHT-ARROW
+
+    elif key == RIGHT_ARROW: # RIGHT-ARROW
         if flags.playback_speed != 50:
             flags.playback_speed += 1
             #print(f'Playback speed: {flags.playback_speed}x ', end='\r')
             status_info.lower_status = ""
             status_info.lower_status = f'Playback speed: {flags.playback_speed}x '
+
+    elif key == DOWN_ARROW:  # Down arrow
+        if flags.key_code is None:
+            # Start row navigation and highlight the first row
+            flags.key_code = 1
+        else:
+            # Increment the key_code, wrapping around if it exceeds the number of rows
+            flags.key_code = (flags.key_code + 1) % (flags.client_count + 1)
+            if flags.key_code == 0:  # Wrap around correction
+                flags.key_code = 1
+        flags.device_switch = True  # Trigger row expansion
+
+    elif key == UP_ARROW:  # Up arrow
+        if flags.key_code is None:
+            # Start row navigation and highlight the last row
+            flags.key_code = flags.client_count
+        else:
+            # Decrement the key_code, wrapping around if it goes below 1
+            flags.key_code -= 1
+            if flags.key_code < 1:
+                flags.key_code = flags.client_count
+        flags.device_switch = True  # Trigger row expansion
+
     elif key == '\x1b':  # ESC key
         print("\n[!] ESC key pressed, exiting...                        ")
         flags.exit_flag = True
@@ -140,7 +165,6 @@ def handle_key_press(key: str) -> None:
             sort_order = ['#', 'SOURCE', 'IPv4', 'IPv6', 'MANUFACTURER', 'TTL', 'COUNTS']
         else:
             sort_order = ['#', 'SOURCE', 'IPv4', 'MANUFACTURER', 'TTL', 'COUNTS']
-    
         current_sort = status_info.sort_column
         # Determine the next column in the sort order
         if current_sort is None or current_sort not in sort_order:
@@ -149,6 +173,7 @@ def handle_key_press(key: str) -> None:
             next_index = (sort_order.index(current_sort) + 1) % len(sort_order)
             status_info.sort_column = sort_order[next_index]
         status_info.lower_status = f"Sorting by: {status_info.sort_column}"
+
     elif key.isdigit() or key in key_mapping:
         if key in key_mapping:
             key = key_mapping.get(key)
@@ -165,6 +190,7 @@ def handle_key_press(key: str) -> None:
                 flags.device_switch = False
             flags.key_code = int(key)
         flags.q_pressed = False
+
     elif key == ' ':  # Checking for space bar key press
         if flags.paused:
             # If currently paused, unpause and restore any previously expanded device row
@@ -182,6 +208,7 @@ def handle_key_press(key: str) -> None:
                 flags.paused_device_selected = flags.key_code  # Remember the currently expanded device
                 flags.key_code = None  # No device row is expanded when paused
         flags.q_pressed = False
+
     elif key.lower() == 'q':
         if flags.q_pressed == True:
             flags.exit_flag = True
@@ -268,7 +295,11 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
             display_body += CURSOR_TO_TOP
             display_body += " " + status_line + '\n\n' 
             # Print the header
-            display_body += " " + header + "\n"
+            if status_info.sort_column:
+                prefix, suffix = header.split(status_info.sort_column)
+                display_body += " " + prefix + PURPLE + status_info.sort_column + DEFAULT + suffix + "\n"
+            else:
+                display_body += " " + header + "\n"
             # Iterate through the clients dictionary and print each row
             for client_mac, client_data in clients_dict.items():
                 if isinstance(client_data, dict):
@@ -290,7 +321,7 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
 
                         # Format and print the row
                         if flags.key_code and client_dict["#"] == flags.key_code:
-                            display_body += DARK_RED
+                            display_body += GREEN
                         elif ext_client.color:
                             display_body += ext_client.color
                         formatted_row = header_format.format(*truncated_dict.values())
@@ -331,7 +362,7 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
 
                     # Format and print the row
                     if flags.key_code and client_dict["#"] == flags.key_code:
-                        display_body += DARK_RED
+                        display_body += GREEN
                     elif client_data.color:
                         display_body += client_data.color
                     formatted_row = header_format.format(*truncated_dict.values())
