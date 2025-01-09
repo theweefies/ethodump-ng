@@ -89,6 +89,8 @@ def get_interface_flags(iface_name: str) -> str:
     libc.freeifaddrs(addr)
 
     if flags is None:
+        print(f"[!] ERROR: Could not find flags for interface {iface_name}")
+        exit()
         raise ValueError(f"Could not find flags for interface {iface_name}")
 
     # Decode flags into human-readable form
