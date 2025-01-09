@@ -307,7 +307,11 @@ def decode_name(reader: BytesIO) -> bytes:
             break
         else:
             parts.append(reader.read(length))
-    return b".".join(parts)
+
+    if parts:
+        return b".".join(parts)
+    else:
+        return b""
 
 def decode_compressed_name(length: int, reader: BytesIO) -> bytes:
     """
