@@ -253,7 +253,7 @@ def process_nbns_packet(packet: NBNSPacket, cur_client: Client) -> None:
     # Extract hostnames from the questions
     for question in packet.questions:
         if isinstance(question, NetBIOSQuery):
-            cur_client.notes.add(f"query: {question.name.lower()}")
+            cur_client.queries.add(question.name.lower())
             if question.control_code in [SERVER_SERVICE, MASTER_BROWSER, LOCAL_MASTER_BROWSER]:
                 cur_client.services.add(question.name)
             elif question.control_code == DOMAIN_CONTROLLER:
