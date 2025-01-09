@@ -74,7 +74,7 @@ DEFAULT = '\x1b[0m'
 CURSOR_TO_TOP = '\x1b[H'
 CLEAR_SCREEN_CURSOR_TO_TOP = '\x1b[2J\x1b[H'
 
-UBUNTU_SYSTEM_LIST = ['jammy','focal','kinetic']
+UBUNTU_SYSTEM_LIST = ['jammy','focal','kinetic','noble']
 PI_SYSTEM_LIST = ['bullseye','buster','bookworm']
 
 # Mapping keys to clients for display expansion
