@@ -470,6 +470,7 @@ class Flags:
         self.extender_present       = False
         self.playback_speed         = 1
         self.full_expansion         = False
+        self.send_ping              = False
 
 class Client:
     """

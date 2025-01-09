@@ -30,7 +30,7 @@ from arp import parse_arp, process_arp
 from dhcp import *
 from dns_ import parse_dns_packet, process_dns_packet
 from http_ import detect_service_banner, parse_http, start_server, start_https_server
-from icmp import parse_icmp, parse_icmpv6, process_icmpv6_packet
+from icmp import parse_icmp, parse_icmpv6, process_icmpv6_packet, send_ping
 from igmp import parse_igmp
 from ipp import parse_ipp
 from lldp import parse_lldp, process_lldp
@@ -120,6 +120,10 @@ def handle_key_press(key: str) -> None:
     Function to commit control actions after detecting specific
     key presses.
     """
+    if key.lower() == 'p' and flags.full_expansion:
+        flags.send_ping = True
+        return
+
     if key == LEFT_ARROW: # LEFT-ARROW
         if flags.playback_speed != 1:
             flags.playback_speed -= 1
@@ -233,6 +237,9 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
     Real-Time Display. Target of thread.
     """
 
+    status_start_time  = time.time()
+    status_clear_after = 10
+
     show_ipv6 = status_info.show_ipv6
 
     # Define maximum widths for each column
@@ -254,6 +261,10 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
     sys.stdout.write('\x1b[2J\x1b[H') # initial clear screen and move cursor to top left
 
     while not flags.exit_flag:
+
+        if status_info.lower_status and (time.time() - status_start_time > status_clear_after):
+            status_info.lower_status = ""  # Clear the status line
+            status_start_time = time.time()
 
         if not flags.paused:
             sys.stdout.write(CLEAR_SCREEN_CURSOR_TO_TOP)
@@ -406,10 +417,12 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
 
             sys.stdout.write(truncated_display_body)
             sys.stdout.flush()
-            time.sleep(.6)  # Update every half second
-            
+   
         else:
             if flags.full_expansion:
+
+                display_body = ""
+
                 sys.stdout.write(CLEAR_SCREEN_CURSOR_TO_TOP)
                 # Get the terminal size
                 rows, columns = get_terminal_size()
@@ -423,18 +436,26 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
                         selected_client = client
                         break
                 if selected_client:
+                    if flags.send_ping:
+                        flags.send_ping = False
+                        send_ping(selected_client, status_info)
                     # Print the status line
                     current_time = time.time()
                     elapsed_time = int(current_time - status_info.start_time)
                     elapsed_str = f"{elapsed_time // 60} min" if elapsed_time >= 60 else f"{elapsed_time} s"
                     current_date_time = time.strftime('%Y-%m-%d %H:%M', time.localtime())
                     status_line = f"{status_info.interface} ][ Elapsed: {elapsed_str} ][ {current_date_time} {status_info.status_message}"
-                    print(f" {status_line}\n")
+                    
+                    display_body += " " + status_line + "\n"
 
-                    # Print the full details of the client object
-                    print(selected_client)
+                    display_body += str(selected_client)
 
-            time.sleep(.6)
+                    display_body += "\n" + status_info.lower_status + "\n"
+
+                    sys.stdout.write(display_body)
+                    sys.stdout.flush()
+
+        time.sleep(.6)
 
 def load_oui(running_pyz:bool) -> None:
     """
@@ -487,7 +508,8 @@ def parse_packet(p: bytes) -> None:
             # Extender detection - ensure we don't start attempting to modify attributes yet
             if not isinstance(cur_client, dict):
                 if not is_multicast_or_broadcast(eth_header.dst_mac):
-                    cur_client.communicants[eth_header.dst_mac] = None
+                    if eth_header.dst_mac not in cur_client.communicants:
+                        cur_client.communicants[eth_header.dst_mac] = None
 
         # increase packet count for this client
         if not isinstance(cur_client, dict):

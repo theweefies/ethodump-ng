@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 
+import os
+import time
 import struct
 import socket
 from io import BytesIO
 from typing import List
 from dataclasses import dataclass, field
 
-from globals import DARK_RED
+from globals import DARK_RED, Client
 
-ECHO_PING_REQUEST = 128
-ROUTER_SOLICITATION = 133
-ROUTER_ADVERTISEMENT = 134
-NEIGHBOR_SOLICITATION = 135
-NEIGHBOR_ADVERTISEMENT = 136
+ECHO_PING_REQUEST         = 128
+ROUTER_SOLICITATION       = 133
+ROUTER_ADVERTISEMENT      = 134
+NEIGHBOR_SOLICITATION     = 135
+NEIGHBOR_ADVERTISEMENT    = 136
 MULTICAST_LIST_REP_MSG_V2 = 143
 
 @dataclass
@@ -239,3 +241,73 @@ def parse_icmpv6(reader: BytesIO):
                     multicast_address_records)
     else:
         return None
+
+def checksum(data: bytes) -> int:
+    """Calculate the ICMP checksum."""
+    if len(data) % 2:
+        data += b'\x00'
+    checksum = 0
+    for i in range(0, len(data), 2):
+        word = (data[i] << 8) + data[i + 1]
+        checksum += word
+        checksum = (checksum & 0xFFFF) + (checksum >> 16)
+    return ~checksum & 0xFFFF
+
+def send_ping(client_obj: Client, status_info) -> None:
+    """
+    Send a single ping to the client
+    """
+
+    ICMP_ECHO_REQUEST = 8  # ICMP type for Echo Request
+    ICMP_CODE         = 0
+    # Use the process ID as the identifier
+    ID                = os.getpid() & 0xFFFF
+    SEQUENCE          = 1
+    TIMEOUT           = 3
+
+    destination_ip = client_obj.ip_address
+    if not destination_ip:
+        status_info.lower_status = "[!] IP Address not collected yet; can't send ping."
+        return
+    
+    try:
+        # Create a raw socket
+        with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP) as sock:
+            sock.settimeout(TIMEOUT)
+
+            # Construct the ICMP header and payload
+            payload = b'Hello!'  # Example payload
+            header = struct.pack('!BBHHH', ICMP_ECHO_REQUEST, ICMP_CODE, 0, ID, SEQUENCE)
+            checksum_value = checksum(header + payload)
+            header = struct.pack('!BBHHH', ICMP_ECHO_REQUEST, ICMP_CODE, checksum_value, ID, SEQUENCE)
+            packet = header + payload
+
+            # Send the packet
+            send_time = time.time()
+            sock.sendto(packet, (destination_ip, 0))
+
+            # Wait for the reply
+            response, addr = sock.recvfrom(1024)
+            receive_time = time.time()
+
+            # Unpack the ICMP header from the response
+            icmp_header = response[20:28]
+            icmp_type, icmp_code, _, reply_id, _ = struct.unpack('!BBHHH', icmp_header)
+
+            if icmp_type == 0 and reply_id == ID:  # Echo Reply
+                delay = (receive_time - send_time) * 1000  # Convert to ms
+                status_info.lower_status = f"[+] Reply from {addr[0]}: time={delay:.2f}ms"
+                return
+            else:
+                status_info.lower_status = "[!] Received an unexpected response."
+                return
+            
+    except socket.timeout:
+        status_info.lower_status = "[!] Request timed out."
+        return
+    except PermissionError:
+        status_info.lower_status = "[!] Root privileges are required to send raw ICMP packets."
+        return
+    except Exception as e:
+        status_info.lower_status = f"[!] An error occurred: {e}"
+        return
