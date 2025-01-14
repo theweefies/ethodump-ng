@@ -75,7 +75,6 @@ def parse_ssdp_packet(payload: bytes, cur_client: Client, grab_resources: bool=F
                     if HTTP_NO_HOST in location or HTTPS_NO_HOST in location:
                         prefix, suffix = location.split('//')
                         location = f"{prefix}//{cur_client.ip_address}{suffix}"
-                        print(location)
                     cur_client.resource_urls.add(location)
             if SERVER_TAG in line:
                 server = line.split(': ')[1].strip()
