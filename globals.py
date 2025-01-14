@@ -471,6 +471,7 @@ class Flags:
         self.playback_speed         = 1
         self.full_expansion         = False
         self.send_ping              = False
+        self.pcap_read              = False
 
 class Client:
     """

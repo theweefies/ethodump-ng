@@ -120,7 +120,7 @@ def handle_key_press(key: str) -> None:
     Function to commit control actions after detecting specific
     key presses.
     """
-    if key.lower() == 'p' and flags.full_expansion:
+    if key.lower() == 'p' and flags.full_expansion and not flags.pcap_read:
         flags.send_ping = True
         return
 
@@ -432,7 +432,7 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
                 # Find the client object with the matching client_count
                 selected_client = None
                 for mac, client in clients_dict.items():
-                    if client.client_count == flags.key_code:
+                    if hasattr(client, "client_count") and client.client_count == flags.key_code:
                         selected_client = client
                         break
                 if selected_client:
@@ -1193,6 +1193,8 @@ if __name__ == "__main__":
     status_info.show_ipv6 = args.show_ipv6
     # Initialize global flags class for signal management
     flags = Flags()
+    if args.read_pcap:
+        flags.pcap_read = True
     # Initialize the queue(s)
     packet_queue = queue.Queue(QUEUE_SIZE)
     # Set the threading lock
