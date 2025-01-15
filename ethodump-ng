@@ -291,7 +291,7 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
                 if sort_column in sort_map:
                     clients_dict = dict(sorted(
                         clients_dict.items(),
-                        key=lambda item: sort_map[sort_column](item[1])  # Access the relevant Client attribute
+                        key=lambda item: sort_map[sort_column](item[1]) if isinstance(item[1], Client) else None
                     ))
 
             display_body = ""
