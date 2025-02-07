@@ -276,15 +276,15 @@ def display_devices(clients_:dict, status_info: StatusInfo) -> None:
 
             sort_column = status_info.sort_column
             if sort_column:
-                # Define a mapping of sort_column to Client attributes
+                # Define a mapping of sort_column to Client attributes, ensuring None values are handled safely
                 sort_map = {
-                    '#': lambda client: client.client_count,
-                    'SOURCE': lambda client: client.src_mac,
-                    'IPv4': lambda client: client.ip_address or '',
-                    'IPv6': lambda client: client.ipv6_address or '',
-                    'MANUFACTURER': lambda client: client.manufacturer or '',
-                    'TTL': lambda client: client.ttl or 0,
-                    'COUNTS': lambda client: client.count,
+                    '#': lambda client: client.client_count if client.client_count is not None else -1,
+                    'SOURCE': lambda client: client.src_mac if client.src_mac is not None else '',
+                    'IPv4': lambda client: client.ip_address if client.ip_address is not None else '',
+                    'IPv6': lambda client: client.ipv6_address if client.ipv6_address is not None else '',
+                    'MANUFACTURER': lambda client: client.manufacturer if client.manufacturer is not None else '',
+                    'TTL': lambda client: client.ttl if client.ttl is not None else 0,
+                    'COUNTS': lambda client: client.count if client.count is not None else 0,
                 }
                 
                 # Ensure the selected column exists in the mapping
