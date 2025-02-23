@@ -532,7 +532,7 @@ class Client:
             ("Resource URLs",           ", ".join(self.resource_urls)),
             ("DNS Queries",             ", ".join(self.dns_names)),
             ("Protocols",               ", ".join(self.protocols)),
-            ("TLS Fingerprints",        ", ".join([f"{protocol.upper()}: {fingerprint if fingerprint else 'Not Available'}" for protocol, fingerprint in self.fingerprints.items()])),
+            ("Fingerprints",        ", ".join([f"{protocol.upper()}: {fingerprint if fingerprint else 'Not Available'}" for protocol, fingerprint in self.fingerprints.items()])),
             ("TLS JA3 Classifications", "; ".join(self.tls_ja3_classifications)),
             ("TLS SNIs",                ", ".join(self.tls_snis)),
             ("Credential Pairs",        ", ".join(self.cred_pairs)),

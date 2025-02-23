@@ -47,6 +47,7 @@ from asus_disc import parse_asus_disc
 from cdp import parse_cdp_response
 from dhip import parse_dhip
 from hikvision import parse_hikvision
+from huawei_coap import parse_huawei_coap_packet
 from mndp import parse_mndp_packet, process_mndp_packet
 from tp_link import parse_tp_link
 from tuya_iot import parse_tuya
@@ -554,8 +555,12 @@ def parse_packet(p: bytes) -> None:
                 else:
                     # Here we detect the first instance of a mac having multiple ip addresses associated with it
                     if cur_client.ip_address and cur_client.ip_address != ip_header.src_ip:
+                        # If the current client's IP is '0.0.0.0' and we receive a new (non-0.0.0.0) IP,
+                        # update the current client rather than creating a duplicate.
+                        if cur_client.ip_address == '0.0.0.0' and ip_header.src_ip != '0.0.0.0':
+                            cur_client.ip_address = ip_header.src_ip
                         # dhcp discovery or request
-                        if ip_header.src_ip != '0.0.0.0':
+                        elif ip_header.src_ip != '0.0.0.0':
                             flags.extender_present = True
                             clients[eth_header.src_mac] = {}
                             clients[eth_header.src_mac][cur_client.ip_address] = cur_client
@@ -651,6 +656,11 @@ def parse_packet(p: bytes) -> None:
                     else:
                         process_mndp_packet(mndp_packet, cur_client)
                     cur_client.protocols.add('MNDP')
+                    return
+                
+                elif udp_header.src_port == 5684 or udp_header.dst_port == 5684:
+                    parse_huawei_coap_packet(payload, cur_client)
+                    cur_client.protocols.add('HUAWEI_COAP')
                     return
                 
                 elif udp_header.dst_port == 6667:
