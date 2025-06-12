@@ -18,6 +18,7 @@ DHCP_CLIENTID_OPT   =  61
 DHCP_ROUTER_OPT     =   3
 DHCP_DOM_NAME_OPT   =  15
 DHCP_FQDN_OPT       = 119
+DHCP_VI_OPT         = 125
 DHCP_DNS_OPT        =   6
 DHCP_SERVER_ID_OPT  =  54
 DHCP_MESSAGE_TYPE   =  53
@@ -191,6 +192,33 @@ def extract_dhcp_client_details(dhcp_packet: DHCPPacket, cur_client: Client, cli
         fqdn_decoded = is_utf8_decodable(fqdn)
         fqdn_cleaned = clean_name(fqdn_decoded)
         cur_client.hostnames.add(fqdn_cleaned)
+
+    vendor_info_125 = get_dhcp_option(dhcp_packet, DHCP_VI_OPT)
+    if vendor_info_125 and len(vendor_info_125) >= 4:
+        try:
+            enterprise_id = struct.unpack('!I', vendor_info_125[:4])[0]
+            cur_client.notes.add(f"opt125_ent: {enterprise_id}")
+            so_len = vendor_info_125[4]
+            subopt_data = vendor_info_125[5:]
+            i = 0
+            while i + 2 <= so_len:
+                subopt_code = subopt_data[i]
+                subopt_len = subopt_data[i+1]
+                subopt_val = subopt_data[i+2:i+2+subopt_len]
+                if len(subopt_val) != subopt_len:
+                    break  # malformed suboption
+
+                label = f"opt125_{enterprise_id}_{subopt_code}"
+                decoded = is_utf8_decodable(subopt_val)
+                if decoded and len(decoded) > 2:
+                    cur_client.notes.add(f"{label}:{decoded}")
+                    cur_client.oses.add(f"{label}:{decoded}")
+                else:
+                    cur_client.notes.add(f"{label}_hex:{subopt_val.hex()}")
+
+                i += 2 + subopt_len
+        except Exception as e:
+            pass
 
     opt_53_msg_type = get_dhcp_option(dhcp_packet, DHCP_MESSAGE_TYPE)
 
